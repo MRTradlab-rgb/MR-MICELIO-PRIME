@@ -100,10 +100,12 @@ async function evaluateDue(db,symbol,candles) {
 async function createForecasts(db,symbol,candles) {
   const f=features(candles), candle=candles.at(-1), target=candle.openTime+HORIZON_MINUTES*60000;
   const batch=[];
+  const forecastAgents=[];
   for(const a of AGENTS) {
     const d=decide(a,f);
     if(d.direction==="HOLD"||d.confidence<0.18) continue;
     const forecastKey=`${symbol}:${a.id}:${candle.openTime}`;
+    forecastAgents.push(a.id);
     batch.push(db.prepare("INSERT OR IGNORE INTO engine_forecasts(forecast_key,agent_id,symbol,candle_open_time,target_open_time,direction,entry_price,strategy,score,confidence,regime,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDING',?)")
       .bind(forecastKey,a.id,symbol,candle.openTime,target,d.direction,f.last,a.strategy,d.score,d.confidence,f.volatility>0.002?"HIGH_VOL":f.trend>0.001?"UPTREND":f.trend< -0.001?"DOWNTREND":"RANGE",nowIso()));
   }
@@ -111,7 +113,7 @@ async function createForecasts(db,symbol,candles) {
     const inserted=await db.batch(batch);
     for(let i=0;i<inserted.length;i++) {
       if(Number(inserted[i].meta?.changes||0)===1) {
-        const agentId=AGENTS[i].id;
+        const agentId=forecastAgents[i];
         await db.prepare("UPDATE engine_agents SET total_forecasts=total_forecasts+1,updated_at=? WHERE agent_id=?").bind(nowIso(),agentId).run();
       }
     }
@@ -150,7 +152,7 @@ export async function handleEngine(request,env,url,json) {
       env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 1").first()
     ]);
     const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
-    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),directionalWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
   }
   if(request.method==="POST"&&url.pathname==="/engine/seed") {
     if(!auth(request,env)) return json({ok:false,error:"UNAUTHORIZED"},401,request);
