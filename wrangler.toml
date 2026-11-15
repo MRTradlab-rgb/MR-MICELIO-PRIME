@@ -4,3 +4,9 @@ compatibility_date = "2026-11-14"
 
 [ai]
 binding = "AI"
+
+# Ative após criar o banco D1 e obter o database_id no painel Cloudflare:
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "mr-micelio-evolution"
+# database_id = "COLE_AQUI_O_DATABASE_ID"
