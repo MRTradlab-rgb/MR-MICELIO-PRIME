@@ -118,7 +118,7 @@ async function createForecasts(db,symbol,candles) {
       }
     }
   }
-  return {created:batch.length,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
+  return {created,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
 }
 
 export async function runAutonomousTick(env) {
@@ -153,6 +153,11 @@ export async function handleEngine(request,env,url,json) {
     ]);
     const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
     return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+  }
+  if(request.method==="GET"&&url.pathname==="/engine/agents") {
+    await ensureAgents(env.DB);
+    const rows=await env.DB.prepare("SELECT agent_id,archetype,strategy,threshold,total_forecasts,closed_forecasts,wins,losses,net_return_sum,CASE WHEN closed_forecasts>0 THEN ROUND(wins*100.0/closed_forecasts,2) ELSE NULL END AS net_win_rate,CASE WHEN closed_forecasts>0 THEN net_return_sum/closed_forecasts ELSE NULL END AS average_net_return,updated_at FROM engine_agents ORDER BY CASE WHEN closed_forecasts>=20 THEN 0 ELSE 1 END, net_return_sum DESC, net_win_rate DESC").all();
+    return json({ok:true,agents:rows.results||[],note:"Ranking exploratório; amostras pequenas não são evidência de vantagem estatística."},200,request);
   }
   if(request.method==="POST"&&url.pathname==="/engine/seed") {
     if(!auth(request,env)) return json({ok:false,error:"UNAUTHORIZED"},401,request);
