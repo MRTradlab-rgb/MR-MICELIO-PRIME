@@ -12,7 +12,7 @@ O Worker passa a ter o módulo de evolução e endpoints D1. A persistência só
 50 agentes iniciais: 25 CONSERVADOR e 25 EXPLORADOR, com especialidades distribuídas por categoria. A inicialização usa INSERT OR IGNORE e preserva saldos/histórico existentes.
 
 ## Regras iniciais de recompensa
-- Avaliação individual exige pelo menos 20 previsões no lote, acurácia >= 70% e zero erros repetidos.
+- Avaliação individual exige pelo menos 20 previsões no lote, acurácia >= 70%, zero erros repetidos, risco aprovado (`riskPassed: true`) e validação fora da amostra (`outOfSample: true`). Cada lote deve trazer `eventId` único; eventos repetidos são recusados.
 - Recompensa individual: 10 COX virtuais; 25 COX se também houver melhoria de pelo menos 3 pontos percentuais contra o histórico anterior.
 - XP é calculado com base em acertos, ausência de erros repetidos e melhoria.
 - Bônus coletivo: 5 COX virtuais por agente, no máximo uma vez a cada 24h, quando a rede atingir 500 previsões acumuladas e 70% de acurácia agregada.
@@ -28,10 +28,12 @@ O endpoint de avaliação recebe métricas agregadas, portanto deve ser chamado 
 ## Ativação Cloudflare necessária
 1. Criar um banco D1 com nome `mr-micelio-evolution`.
 2. Aplicar `migrations/0001_micelio_evolution.sql`.
-3. Adicionar binding D1 com variável `DB` ao Worker `mr-micelio` e database_id gerado pela Cloudflare.
+3. Adicionar binding D1 com variável `DB` ao Worker `mr-micelio` e database_id gerado pela Cloudflare. O `wrangler.toml` contém o bloco comentado como modelo.
 4. Criar secret `EVOLUTION_ADMIN_TOKEN` no Worker.
 5. Fazer deploy e verificar `GET /evolution`.
 6. Inicializar os agentes com uma chamada autenticada a `POST /evolution/seed`.
+
+Para avaliar um lote, o serviço confiável de simulação deverá enviar `agentId`, `eventId`, `predictions`, `correct`, `repeatedErrors`, `riskPassed` e `outOfSample` a `POST /evolution/evaluate`, com o Bearer token. Não coloque esse token em HTML ou JavaScript público.
 
 ## Limitações honestas
 - O módulo não lê ainda as previsões diretamente do motor do TradLab; precisa de integração do produtor de resultados.
