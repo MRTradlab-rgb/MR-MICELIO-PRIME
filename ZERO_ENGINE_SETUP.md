@@ -1,7 +1,7 @@
 # MR TradLab ZERO — Motor autônomo de 50 agentes
 
 ## O que esta entrega faz
-- Executa um ciclo agendado a cada minuto no Cloudflare Workers.
+- Executa um ciclo agendado a cada minuto no Cloudflare Workers, quando o Cron Trigger estiver ativo na implantação.
 - Busca candles fechados de 1 minuto da API pública da Binance para BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT e XRPUSDT.
 - Mantém 50 agentes: 25 CONSERVADORES e 25 EXPLORADORES, distribuídos em seis famílias de estratégia.
 - Gera previsões simuladas BUY/SELL, sem enviar ordens.
@@ -10,21 +10,31 @@
 - Persiste candles, previsões, avaliações e execuções em D1.
 
 ## Ativação Cloudflare
-1. No banco D1 já destinado ao Micélio Prime (mr-micelio-evolution), execute a migration existente migrations/0001_micelio_evolution.sql se ainda não foi aplicada.
-2. Execute migrations/0002_zero_autonomous_engine.sql no mesmo banco.
-4. No Worker mr-micelio, confirme o binding D1 com variável DB apontando para esse banco.
-5. Crie o secret ENGINE_ADMIN_TOKEN com um valor forte e exclusivo. Não coloque esse token no HTML, GitHub ou mensagens públicas.
-6. A configuração wrangler.toml adiciona Cron * * * * *. Após publicar esta branch na configuração do Worker, confirme que o Cron Trigger está ativo.
+1. No Worker `mr-micelio`, confirme o binding D1 `DB` apontando para o banco configurado em `wrangler.toml`: `mr-micelio-prime-db` (ID `5627481f-d743-49d8-b96e-6905bac65708`). Não use outro banco por engano.
+2. Se o módulo Evolution estiver em uso e ainda não tiver suas tabelas, aplique `migrations/0001_micelio_evolution.sql` nesse mesmo banco.
+3. Aplique `migrations/0002_zero_autonomous_engine.sql` uma única vez.
+4. Depois aplique `migrations/0003_prime_orchestration.sql` uma única vez. Ela adiciona status/missões e as tabelas de ações/experimentos.
+5. Crie o secret `ENGINE_ADMIN_TOKEN` com um valor forte e exclusivo. Não coloque esse token no HTML, GitHub ou mensagens públicas.
+6. A configuração `wrangler.toml` declara Cron `* * * * *`. Após publicar esta branch na configuração do Worker, confirme em Settings/Triggers que o Cron Trigger está ativo.
 7. Faça deploy e consulte `GET /health`. O endpoint verifica AI, D1, schema e os 50 agentes. Depois consulte `GET /engine/status`; a resposta deve mostrar 50 agentes e mode: `PAPER_ONLY`.
-8. O endpoint `/health` informa que o Cron está declarado no arquivo, mas não consegue provar sozinho que o trigger foi ativado no painel Cloudflare. Confirme em Settings/Triggers e valide novas linhas em `engine_runs` após alguns minutos.
+8. O endpoint `/health` informa que o Cron está declarado no código, mas não prova sozinho que o trigger foi ativado na implantação. Confirme no painel e valide novas linhas em `engine_runs` após alguns minutos.
 
 ## Endpoints
-- GET /engine/status: estado, contadores e última execução.
-- GET /engine/agents: ranking exploratório dos 50 agentes, com status e missão.\n- POST /chat: Gemma recebe contexto do motor e pode executar comandos estruturados autorizados; o resultado aparece em `executedActions`.
-- POST /engine/seed: inicializa os 50 agentes; exige Authorization: Bearer ENGINE_ADMIN_TOKEN.
-- POST /engine/tick: executa um ciclo manual; exige o mesmo Bearer token. O Cron executa automaticamente.
+- `GET /health`: diagnóstico de AI, D1, schema e 50 agentes; informa a configuração esperada do Cron sem alegar que o trigger está ativo.
+- `GET /engine/status`: estado, contadores e última execução.
+- `GET /engine/agents`: ranking exploratório dos 50 agentes, com status e missão.
+- `POST /chat`: Gemma recebe contexto do motor e pode executar comandos estruturados autorizados; o resultado aparece em `executedActions`.
+- `POST /engine/seed`: inicializa os 50 agentes; exige Authorization: Bearer ENGINE_ADMIN_TOKEN.
+- `POST /engine/tick`: executa um ciclo manual; exige o mesmo Bearer token. O Cron executa automaticamente quando ativo.
 
-## Coordenação Prime e aprendizagem adaptativa\n- Gemma recebe resumo de agentes, líderes e últimas execuções antes de responder.\n- O executor aceita somente comandos estruturados permitidos: pausar/retomar agente ou grupo, atribuir missão, analisar saúde e registrar experimento PAPER_ONLY.\n- Toda ação executada é registrada em `engine_prime_actions`; experimentos são registrados em `engine_experiments`.\n- Após pelo menos 10 avaliações recentes por agente, o limiar de entrada é ajustado gradualmente conforme o retorno líquido médio. A estratégia especialista não é trocada automaticamente nesta fase.\n- Pausar um agente impede novas previsões dele; previsões já abertas continuam sendo avaliadas.\n\n## Limitações deliberadas desta fase
+## Coordenação Prime e aprendizagem adaptativa
+- Gemma recebe resumo de agentes, líderes e últimas execuções antes de responder.
+- O executor aceita somente comandos estruturados permitidos: pausar/retomar agente ou grupo, atribuir missão, analisar saúde e registrar experimento PAPER_ONLY.
+- Toda ação executada é registrada em `engine_prime_actions`; experimentos são registrados em `engine_experiments`.
+- Após pelo menos 10 avaliações recentes por agente, o limiar de entrada é ajustado gradualmente conforme o retorno líquido médio. A estratégia especialista não é trocada automaticamente nesta fase.
+- Pausar um agente impede novas previsões dele; previsões já abertas continuam sendo avaliadas.
+
+## Limitações deliberadas desta fase
 - O ciclo é de um minuto com candles REST fechados, não um WebSocket persistente por segundo.
 - A fase atual não cria ordens, não lê saldo, não acessa carteira, não recebe chaves Binance e não possui endpoint de execução.
 - A previsão é uma hipótese estatística, não uma garantia de acerto.
