@@ -1,0 +1,157 @@
+/**
+ * MR TRADLAB ZERO — AUTONOMOUS PAPER ENGINE
+ * 50 cooperative agents, public Binance market data, D1 persistence.
+ * No exchange keys, no order endpoint, no real-money execution.
+ */
+const SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+const STRATEGIES = ["MOMENTUM","MEAN_REVERSION","BREAKOUT","VOLATILITY","TREND","CONTRARIAN"];
+const FEE_PER_SIDE = 0.001;
+const SLIPPAGE_PER_SIDE = 0.0005;
+const HORIZON_MINUTES = 3;
+const nowIso = () => new Date().toISOString();
+const clamp = (x,a,b) => Math.max(a,Math.min(b,x));
+const mean = a => a.length ? a.reduce((s,x)=>s+x,0)/a.length : 0;
+const std = a => { const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2))); };
+const auth = (request,env) => Boolean(env.ENGINE_ADMIN_TOKEN) && request.headers.get("Authorization") === `Bearer ${env.ENGINE_ADMIN_TOKEN}`;
+
+const AGENTS = Array.from({length:50},(_,i)=>({
+  id:`agent-${String(i+1).padStart(2,"0")}`,
+  archetype:i<25?"CONSERVADOR":"EXPLORADOR",
+  strategy:STRATEGIES[i%STRATEGIES.length],
+  threshold:(i<25?0.00035:0.00018)+(i%7)*0.000055,
+  horizon:HORIZON_MINUTES
+}));
+
+async function ensureAgents(db) {
+  const stamp=nowIso();
+  await db.batch(AGENTS.map(a=>db.prepare(
+    "INSERT OR IGNORE INTO engine_agents (agent_id,archetype,strategy,threshold,total_forecasts,closed_forecasts,wins,losses,net_return_sum,updated_at) VALUES (?,?,?,?,0,0,0,0,0,?)"
+  ).bind(a.id,a.archetype,a.strategy,a.threshold,stamp)));
+}
+
+async function fetchCandles(symbol) {
+  const url=`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1m&limit=80`;
+  const res=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(9000)});
+  if(!res.ok) throw new Error(`BINANCE_HTTP_${res.status}_${symbol}`);
+  const rows=await res.json();
+  if(!Array.isArray(rows)||rows.length<30) throw new Error(`INSUFFICIENT_CANDLES_${symbol}`);
+  const closed=rows.filter(r=>Number(r[6])<Date.now()-1500);
+  if(closed.length<25) throw new Error(`NO_CLOSED_CANDLES_${symbol}`);
+  return closed.map(r=>({openTime:Number(r[0]),open:Number(r[1]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[5]),closeTime:Number(r[6])}));
+}
+
+function features(c) {
+  const closes=c.map(x=>x.close), volumes=c.map(x=>x.volume);
+  const last=closes.at(-1), prev=closes.at(-2);
+  const returns=closes.slice(1).map((v,i)=>v/closes[i]-1);
+  const r1=last/prev-1, r3=last/closes.at(-4)-1, r6=last/closes.at(-7)-1, r12=last/closes.at(-13)-1;
+  const recentReturns=returns.slice(-20), volatility=std(recentReturns);
+  const recent=closes.slice(-20), avg=mean(recent);
+  const high=Math.max(...c.slice(-20,-1).map(x=>x.high));
+  const low=Math.min(...c.slice(-20,-1).map(x=>x.low));
+  const volRatio=volumes.at(-1)/(mean(volumes.slice(-21,-1))||1);
+  const ema=(arr,n)=>{const alpha=2/(n+1);return arr.slice(-n*3).reduce((acc,v,i)=>i===0?v:alpha*v+(1-alpha)*acc,arr[0]);};
+  const trend=ema(closes,8)/ema(closes,21)-1;
+  return {last,r1,r3,r6,r12,volatility,mean20:avg,zscore:volatility?((last/avg)-1)/volatility:0,breakout:last>high?1:last<low?-1:0,volRatio,trend,high,low};
+}
+
+function decide(agent,f) {
+  let score=0;
+  switch(agent.strategy) {
+    case "MOMENTUM": score=.20*f.r1+.45*f.r3+.35*f.r6; break;
+    case "MEAN_REVERSION": score=-.35*f.r1-.65*(f.last/f.mean20-1); break;
+    case "BREAKOUT": score=f.breakout*.0015+.10*f.r3; break;
+    case "VOLATILITY": score=Math.sign(f.r1)*f.volatility*clamp(f.volRatio,0.5,2); break;
+    case "TREND": score=.65*f.trend+.35*f.r6; break;
+    case "CONTRARIAN": score=-.30*f.r3-.70*f.r6; break;
+  }
+  const direction=score>agent.threshold?"BUY":score< -agent.threshold?"SELL":"HOLD";
+  const confidence=clamp(Math.abs(score)/Math.max(agent.threshold*3,0.000001),0,1);
+  return {direction,score,confidence};
+}
+
+async function saveCandle(db,symbol,candle) {
+  await db.prepare("INSERT OR IGNORE INTO engine_market_candles(symbol,open_time,open,high,low,close,volume,close_time,received_at) VALUES (?,?,?,?,?,?,?,?,?)")
+    .bind(symbol,candle.openTime,candle.open,candle.high,candle.low,candle.close,candle.volume,candle.closeTime,nowIso()).run();
+}
+
+async function evaluateDue(db,symbol,candles) {
+  const latest=candles.at(-1);
+  const due=await db.prepare("SELECT id,agent_id,direction,entry_price,strategy FROM engine_forecasts WHERE symbol=? AND status='PENDING' AND target_open_time<=? LIMIT 500")
+    .bind(symbol,latest.openTime).all();
+  let evaluated=0;
+  for(const f of (due.results||[])) {
+    const gross=(latest.close-Number(f.entry_price))/Number(f.entry_price)*(f.direction==="BUY"?1:-1);
+    const net=gross-(2*FEE_PER_SIDE)-(2*SLIPPAGE_PER_SIDE);
+    const outcome=net>0?"WIN":"LOSS";
+    const updated=await db.prepare("UPDATE engine_forecasts SET status='CLOSED',exit_price=?,gross_return=?,net_return=?,outcome=?,evaluated_at=? WHERE id=? AND status='PENDING'")
+      .bind(latest.close,gross,net,outcome,nowIso(),f.id).run();
+    if(Number(updated.meta?.changes||0)===1) {
+      await db.prepare("INSERT OR IGNORE INTO engine_evaluations(forecast_id,agent_id,symbol,strategy,net_return,outcome,evaluated_at) VALUES (?,?,?,?,?,?,?)")
+        .bind(f.id,f.agent_id,symbol,f.strategy,net,outcome,nowIso()).run();
+      await db.prepare("UPDATE engine_agents SET closed_forecasts=closed_forecasts+1,wins=wins+?,losses=losses+?,net_return_sum=net_return_sum+?,updated_at=? WHERE agent_id=?")
+        .bind(outcome==="WIN"?1:0,outcome==="LOSS"?1:0,net,nowIso(),f.agent_id).run();
+      evaluated++;
+    }
+  }
+  return evaluated;
+}
+
+async function createForecasts(db,symbol,candles) {
+  const f=features(candles), candle=candles.at(-1), target=candle.openTime+HORIZON_MINUTES*60000;
+  const batch=[];
+  for(const a of AGENTS) {
+    const d=decide(a,f);
+    if(d.direction==="HOLD"||d.confidence<0.18) continue;
+    const forecastKey=`${symbol}:${a.id}:${candle.openTime}`;
+    batch.push(db.prepare("INSERT OR IGNORE INTO engine_forecasts(forecast_key,agent_id,symbol,candle_open_time,target_open_time,direction,entry_price,strategy,score,confidence,regime,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDING',?)")
+      .bind(forecastKey,a.id,symbol,candle.openTime,target,d.direction,f.last,a.strategy,d.score,d.confidence,f.volatility>0.002?"HIGH_VOL":f.trend>0.001?"UPTREND":f.trend< -0.001?"DOWNTREND":"RANGE",nowIso()));
+  }
+  if(batch.length) await db.batch(batch);
+  return {created:batch.length,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
+}
+
+export async function runAutonomousTick(env) {
+  if(!env.DB) throw new Error("D1_BINDING_MISSING");
+  await ensureAgents(env.DB);
+  const started=Date.now(), results=[], errors=[];
+  for(const symbol of SYMBOLS) {
+    try {
+      const candles=await fetchCandles(symbol);
+      await saveCandle(env.DB,symbol,candles.at(-1));
+      const evaluated=await evaluateDue(env.DB,symbol,candles);
+      const forecast=await createForecasts(env.DB,symbol,candles);
+      results.push({symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,features:forecast.features});
+    } catch(e) { errors.push({symbol,error:String(e.message||e)}); }
+  }
+  const stamp=nowIso();
+  await env.DB.prepare("INSERT INTO engine_runs(run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated,details) VALUES (?,?,?,?,?,?,?)")
+    .bind(stamp,Date.now()-started,results.length,errors.length,results.reduce((s,x)=>s+x.forecastsCreated,0),results.reduce((s,x)=>s+x.evaluated,0),JSON.stringify({results,errors})).run();
+  return {ok:errors.length===0,runAt:stamp,durationMs:Date.now()-started,results,errors,realOrdersEnabled:false};
+}
+
+export async function handleEngine(request,env,url,json) {
+  if(!env.DB) return json({ok:false,error:"D1_BINDING_MISSING"},503,request);
+  if(request.method==="GET"&&url.pathname==="/engine/status") {
+    await ensureAgents(env.DB);
+    const [agents,forecasts,runs,pending,last]=await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS total, SUM(closed_forecasts) AS closed, SUM(wins) AS wins, SUM(losses) AS losses, SUM(net_return_sum) AS net FROM engine_agents").first(),
+      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts").first(),
+      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_runs").first(),
+      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts WHERE status='PENDING'").first(),
+      env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 1").first()
+    ]);
+    const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
+    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),directionalWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+  }
+  if(request.method==="POST"&&url.pathname==="/engine/seed") {
+    if(!auth(request,env)) return json({ok:false,error:"UNAUTHORIZED"},401,request);
+    await ensureAgents(env.DB);
+    return json({ok:true,agentsSeeded:50,mode:"PAPER_ONLY"},200,request);
+  }
+  if(request.method==="POST"&&url.pathname==="/engine/tick") {
+    if(!auth(request,env)) return json({ok:false,error:"UNAUTHORIZED"},401,request);
+    try{return json(await runAutonomousTick(env),200,request);}catch(e){return json({ok:false,error:"ENGINE_TICK_FAILED",detail:String(e.message||e)},500,request);}
+  }
+  return json({ok:false,error:"NOT_FOUND",endpoints:["GET /engine/status","POST /engine/seed","POST /engine/tick"]},404,request);
+}
