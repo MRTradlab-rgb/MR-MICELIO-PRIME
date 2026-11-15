@@ -4,11 +4,12 @@
  * Required binding: AI (Workers AI)
  */
 import { handleEvolution } from "./evolution.js";
+import { handleEngine, runAutonomousTick } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
 function corsHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
-  return {"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type","Access-Control-Max-Age":"86400"};
+  return {"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400"};
 }
 function json(data,status,request) {
   return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=utf-8",...corsHeaders(request)}});
@@ -49,8 +50,9 @@ export default {
  async fetch(request,env) {
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
   const url=new URL(request.url);
+  if(url.pathname.startsWith("/engine")) return handleEngine(request,env,url,json);
   if(url.pathname.startsWith("/evolution")) return handleEvolution(request,env,url,corsHeaders,json);
-  if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat"],health:"/health"},200,request);
+  if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat","GET /engine/status","GET /engine/agents","POST /engine/seed","POST /engine/tick"],health:"/health"},200,request);
   if(request.method==="GET"&&url.pathname==="/health") return json({ok:true,service:"MR Micelio Prime",model:MODEL,aiBinding:Boolean(env.AI),status:env.AI?"READY":"MISSING_AI_BINDING"},env.AI?200:503,request);
   if(request.method!=="POST"||url.pathname!=="/chat") return json({ok:false,error:"Use GET /health or POST /chat"},404,request);
   if(!env.AI) return json({ok:false,error:"Workers AI binding 'AI' is not configured."},503,request);
@@ -82,11 +84,14 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
    let result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_tokens:512,temperature:0.2});
    let parsed=parseModelOutput(result);
    if(!extractText(result).trim()) {
-    const compact="Você é MR Micélio Prime. Responda em português brasileiro, com clareza e em no máximo 5 frases. Não invente dados. Ações permitidas somente se necessárias: "+Array.from(ALLOWED_ACTIONS).join(", ")+". Retorne JSON válido: {\\"reply\\":\\"texto\\",\\"actions\\":[]}\nMensagem: "+userMessage.slice(0,1000)+"\nContexto resumido: "+contextText.slice(0,1200);
+     const compact="Você é MR Micélio Prime. Responda em português brasileiro, com clareza e em no máximo 5 frases. Não invente dados. Ações permitidas somente se necessárias: "+Array.from(ALLOWED_ACTIONS).join(", ")+". Retorne JSON válido: {\"reply\":\"texto\",\"actions\":[]}\nMensagem: "+userMessage.slice(0,1000)+"\nContexto resumido: "+contextText.slice(0,1200);
     result=await env.AI.run(MODEL,{messages:[{role:"user",content:compact}],max_tokens:512,temperature:0.1});
     parsed=parseModelOutput(result);
    }
    return json({ok:true,model:MODEL,reply:parsed.reply,actions:parsed.actions},200,request);
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
+ },
+ async scheduled(controller,env,ctx) {
+  ctx.waitUntil(runAutonomousTick(env).catch(err=>console.error("MR_ZERO_ENGINE_TICK_FAILED",String(err&&err.message||err))));
  }
 };
