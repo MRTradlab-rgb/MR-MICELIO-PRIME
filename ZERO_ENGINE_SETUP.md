@@ -19,6 +19,7 @@
 
 ## Endpoints
 - GET /engine/status: estado, contadores e última execução.
+- GET /engine/agents: ranking exploratório dos 50 agentes.
 - POST /engine/seed: inicializa os 50 agentes; exige Authorization: Bearer ENGINE_ADMIN_TOKEN.
 - POST /engine/tick: executa um ciclo manual; exige o mesmo Bearer token. O Cron executa automaticamente.
 
