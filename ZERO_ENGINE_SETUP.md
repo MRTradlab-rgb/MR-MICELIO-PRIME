@@ -15,7 +15,8 @@
 4. No Worker mr-micelio, confirme o binding D1 com variável DB apontando para esse banco.
 5. Crie o secret ENGINE_ADMIN_TOKEN com um valor forte e exclusivo. Não coloque esse token no HTML, GitHub ou mensagens públicas.
 6. A configuração wrangler.toml adiciona Cron * * * * *. Após publicar esta branch na configuração do Worker, confirme que o Cron Trigger está ativo.
-7. Faça deploy e consulte GET /engine/status. A resposta deve mostrar 50 agentes e mode: PAPER_ONLY.
+7. Faça deploy e consulte `GET /health`. O endpoint verifica AI, D1, schema e os 50 agentes. Depois consulte `GET /engine/status`; a resposta deve mostrar 50 agentes e mode: `PAPER_ONLY`.
+8. O endpoint `/health` informa que o Cron está declarado no arquivo, mas não consegue provar sozinho que o trigger foi ativado no painel Cloudflare. Confirme em Settings/Triggers e valide novas linhas em `engine_runs` após alguns minutos.
 
 ## Endpoints
 - GET /engine/status: estado, contadores e última execução.
