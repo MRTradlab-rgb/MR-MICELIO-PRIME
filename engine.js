@@ -128,15 +128,17 @@ export async function runAutonomousTick(env) {
   if(!env.DB) throw new Error("D1_BINDING_MISSING");
   await ensureAgents(env.DB);
   const started=Date.now(), results=[], errors=[];
-  for(const symbol of SYMBOLS) {
-    try {
-      const candles=await fetchCandles(symbol);
-      await saveCandle(env.DB,symbol,candles.at(-1));
-      const evaluated=await evaluateDue(env.DB,symbol,candles);
-      const forecast=await createForecasts(env.DB,symbol,candles);
-      results.push({symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,features:forecast.features});
-    } catch(e) { errors.push({symbol,error:String(e.message||e)}); }
-  }
+  const outcomes=await Promise.allSettled(SYMBOLS.map(async symbol=>{
+    const candles=await fetchCandles(symbol);
+    await saveCandle(env.DB,symbol,candles.at(-1));
+    const evaluated=await evaluateDue(env.DB,symbol,candles);
+    const forecast=await createForecasts(env.DB,symbol,candles);
+    return {symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,features:forecast.features};
+  }));
+  outcomes.forEach((item,i)=>{
+    if(item.status==="fulfilled") results.push(item.value);
+    else errors.push({symbol:SYMBOLS[i],error:String(item.reason?.message||item.reason)});
+  });
   const stamp=nowIso();
   await env.DB.prepare("INSERT INTO engine_runs(run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated,details) VALUES (?,?,?,?,?,?,?)")
     .bind(stamp,Date.now()-started,results.length,errors.length,results.reduce((s,x)=>s+x.forecastsCreated,0),results.reduce((s,x)=>s+x.evaluated,0),JSON.stringify({results,errors})).run();
