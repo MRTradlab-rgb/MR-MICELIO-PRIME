@@ -31,6 +31,7 @@ export default {
  async fetch(request,env) {
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
   const url=new URL(request.url);
+  if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat"],health:"/health"},200,request);
   if(request.method==="GET"&&url.pathname==="/health") return json({ok:true,service:"MR Micelio Prime",model:MODEL,aiBinding:Boolean(env.AI),status:env.AI?"READY":"MISSING_AI_BINDING"},env.AI?200:503,request);
   if(request.method!=="POST"||url.pathname!=="/chat") return json({ok:false,error:"Use GET /health or POST /chat"},404,request);
   if(!env.AI) return json({ok:false,error:"Workers AI binding 'AI' is not configured."},503,request);
@@ -59,7 +60,7 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
   const conversationText=safeMessages.map(m=>m.role.toUpperCase()+": "+m.content).join("\n");
   const prompt=system+"\n\nCONTEXTO ATUAL DO LABORATÓRIO:\n"+contextText+"\n\nCONVERSA RECENTE:\n"+conversationText+"\n\nMENSAGEM ATUAL:\n"+userMessage.slice(0,4000)+"\n\nResponda no JSON exigido.";
   try {
-   const result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_tokens:900,temperature:0.35});
+   const result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_completion_tokens:900,temperature:0.35});
    const parsed=parseModelOutput(result);
    return json({ok:true,model:MODEL,reply:parsed.reply,actions:parsed.actions},200,request);
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
