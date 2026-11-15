@@ -84,7 +84,7 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
    let result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_tokens:512,temperature:0.2});
    let parsed=parseModelOutput(result);
    if(!extractText(result).trim()) {
-    const compact="Você é MR Micélio Prime. Responda em português brasileiro, com clareza e em no máximo 5 frases. Não invente dados. Ações permitidas somente se necessárias: "+Array.from(ALLOWED_ACTIONS).join(", ")+". Retorne JSON válido: {\\"reply\\":\\"texto\\",\\"actions\\":[]}\nMensagem: "+userMessage.slice(0,1000)+"\nContexto resumido: "+contextText.slice(0,1200);
+     const compact="Você é MR Micélio Prime. Responda em português brasileiro, com clareza e em no máximo 5 frases. Não invente dados. Ações permitidas somente se necessárias: "+Array.from(ALLOWED_ACTIONS).join(", ")+". Retorne JSON válido: {\\"reply\\":\\"texto\\",\\"actions\\":[]}\\nMensagem: "+userMessage.slice(0,1000)+"\\nContexto resumido: "+contextText.slice(0,1200);
     result=await env.AI.run(MODEL,{messages:[{role:"user",content:compact}],max_tokens:512,temperature:0.1});
     parsed=parseModelOutput(result);
    }
