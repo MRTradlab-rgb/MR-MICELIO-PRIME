@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS evolution_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
+  source_event_id TEXT UNIQUE,
   details TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY(agent_id) REFERENCES evolution_agents(agent_id)
