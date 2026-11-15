@@ -4,7 +4,7 @@
  * Required binding: AI (Workers AI)
  */
 import { handleEvolution } from "./evolution.js";
-import { handleEngine, runAutonomousTick } from "./engine.js";
+import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
 function corsHeaders(request) {
@@ -73,11 +73,12 @@ REGRAS:
 - Não afirme que aprendeu permanentemente; proponha registros, testes e métricas verificáveis.
 - Nunca solicite nem exponha chaves, senhas ou credenciais.
 - Nunca autorize operações financeiras reais. Experimentos devem ser simulados.
-- Só proponha ações da lista permitida abaixo. Ações são sugestões para o painel executar, não código livre.
+- Você coordena os 50 agentes com base nos dados reais fornecidos pelo contexto do motor. Pode executar ações estruturadas da lista permitida quando houver justificativa clara. Nunca invente métricas nem alegue ação concluída sem confirmação do executor.
 - Retorne SOMENTE JSON válido no formato: {"reply":"resposta ao usuário","actions":[]}
 Ações permitidas: pause_agent {agentId}, resume_agent {agentId}, pause_group {group}, resume_group {group}, assign_mission {group, mission}, analyze_health {}, start_sandbox_experiment {symbol, strategy, reason}.
 Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
-  const contextText=JSON.stringify(context).slice(0,3500);
+  const primeContext=await getPrimeContext(env.DB);
+  const contextText=JSON.stringify({userContext:context,primeContext}).slice(0,5000);
   const conversationText=safeMessages.map(m=>m.role.toUpperCase()+": "+m.content).join("\n");
   const prompt=system+"\n\nCONTEXTO ATUAL DO LABORATÓRIO:\n"+contextText+"\n\nCONVERSA RECENTE:\n"+conversationText+"\n\nMENSAGEM ATUAL:\n"+userMessage.slice(0,1500)+"\n\nResponda no JSON exigido.";
   try {
@@ -88,7 +89,12 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
     result=await env.AI.run(MODEL,{messages:[{role:"user",content:compact}],max_tokens:512,temperature:0.1});
     parsed=parseModelOutput(result);
    }
-   return json({ok:true,model:MODEL,reply:parsed.reply,actions:parsed.actions},200,request);
+   let executedActions=[]; let actionExecutionError=null;
+   if(parsed.actions.length && env.DB) {
+     try { executedActions=await executePrimeActions(env.DB,parsed.actions); }
+     catch(actionErr) { actionExecutionError=String(actionErr&&actionErr.message||actionErr).slice(0,240); }
+   }
+   return json({ok:true,model:MODEL,role:"MICELIO_PRIME",reply:parsed.reply,actions:parsed.actions,executedActions,actionExecutionError,primeContext},200,request);
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
  },
  async scheduled(controller,env,ctx) {
