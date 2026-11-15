@@ -37,6 +37,7 @@ async function fetchCandles(symbol) {
   if(!Array.isArray(rows)||rows.length<30) throw new Error(`INSUFFICIENT_CANDLES_${symbol}`);
   const closed=rows.filter(r=>Number(r[6])<Date.now()-1500);
   if(closed.length<25) throw new Error(`NO_CLOSED_CANDLES_${symbol}`);
+  if(Date.now()-Number(closed.at(-1)[6])>180000) throw new Error(`STALE_CANDLES_${symbol}`);
   return closed.map(r=>({openTime:Number(r[0]),open:Number(r[1]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[5]),closeTime:Number(r[6])}));
 }
 
@@ -101,6 +102,7 @@ async function createForecasts(db,symbol,candles) {
   const f=features(candles), candle=candles.at(-1), target=candle.openTime+HORIZON_MINUTES*60000;
   const batch=[];
   const forecastAgents=[];
+  let created=0;
   for(const a of AGENTS) {
     const d=decide(a,f);
     if(d.direction==="HOLD"||d.confidence<0.18) continue;
@@ -113,6 +115,7 @@ async function createForecasts(db,symbol,candles) {
     const inserted=await db.batch(batch);
     for(let i=0;i<inserted.length;i++) {
       if(Number(inserted[i].meta?.changes||0)===1) {
+        created++;
         const agentId=forecastAgents[i];
         await db.prepare("UPDATE engine_agents SET total_forecasts=total_forecasts+1,updated_at=? WHERE agent_id=?").bind(nowIso(),agentId).run();
       }
