@@ -35,16 +35,21 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
     if(!token || request.headers.get("Authorization")!==`Bearer ${token}`) return jsonError(json,request,"UNAUTHORIZED","Autorização administrativa necessária.",401);
     let body;try{body=await request.json();}catch{return jsonError(json,request,"INVALID_JSON","Envie JSON válido.");}
     const agentId=typeof body.agentId==="string"?body.agentId:"";
+    const eventId=typeof body.eventId==="string"?body.eventId.trim().slice(0,100):"";
+    const riskPassed=body.riskPassed===true;
+    const outOfSample=body.outOfSample===true;
     const predictions=safeInt(body.predictions,1,100000);
     const correct=safeInt(body.correct,0,100000);
     const repeatedErrors=safeInt(body.repeatedErrors,0,100000);
-    if(!/^agent-(0[1-9]|[1-4][0-9]|50)$/.test(agentId)||predictions===null||correct===null||correct>predictions||repeatedErrors===null) return jsonError(json,request,"INVALID_METRICS","Métricas inválidas ou agente desconhecido.");
+    if(!/^agent-(0[1-9]|[1-4][0-9]|50)$/.test(agentId)||!eventId||predictions===null||correct===null||correct>predictions||repeatedErrors===null) return jsonError(json,request,"INVALID_METRICS","Informe agente, eventId único e métricas inteiras válidas.");
     await ensureAgents(env.DB);
+    const duplicate=await env.DB.prepare("SELECT id FROM evolution_events WHERE source_event_id=?").bind(eventId).first();
+    if(duplicate) return jsonError(json,request,"DUPLICATE_EVENT","Este lote já foi processado; nenhuma recompensa foi repetida.",409);
     const existing=await env.DB.prepare("SELECT * FROM evolution_agents WHERE agent_id=?").bind(agentId).first();
     const accuracy=correct/predictions;
     const improvement=existing.total_predictions>0 ? accuracy-(existing.correct_predictions/Math.max(1,existing.total_predictions)) : 0;
     const qualified=predictions>=20;
-    const individualReward=qualified && accuracy>=0.70 && repeatedErrors===0 ? (improvement>=0.03?25:10) : 0;
+    const individualReward=qualified && accuracy>=0.70 && repeatedErrors===0 && riskPassed && outOfSample ? (improvement>=0.03?25:10) : 0;
     const stamp=now();
     const nextTotal=Number(existing.total_predictions)+predictions;
     const nextCorrect=Number(existing.correct_predictions)+correct;
@@ -53,7 +58,7 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
     const level=1+Math.floor(nextXp/500);
     const ops=[
       env.DB.prepare("UPDATE evolution_agents SET level=?, xp=?, cox_balance=cox_balance+?, total_predictions=?, correct_predictions=?, repeated_errors=?, updated_at=? WHERE agent_id=?").bind(level,nextXp,individualReward,nextTotal,nextCorrect,repeatedErrors,stamp,agentId),
-      env.DB.prepare("INSERT INTO evolution_events (agent_id,event_type,details,created_at) VALUES (?,?,?,?)").bind(agentId,"EVALUATION",JSON.stringify({predictions,correct,accuracy:Number((accuracy*100).toFixed(2)),repeatedErrors,improvement:Number((improvement*100).toFixed(2)),xp,individualReward}),stamp)
+      env.DB.prepare("INSERT INTO evolution_events (agent_id,event_type,source_event_id,details,created_at) VALUES (?,?,?,?,?)").bind(agentId,"EVALUATION",eventId,JSON.stringify({predictions,correct,accuracy:Number((accuracy*100).toFixed(2)),repeatedErrors,improvement:Number((improvement*100).toFixed(2)),riskPassed,outOfSample,xp,individualReward}),stamp)
     ];
     if(individualReward>0) ops.push(env.DB.prepare("INSERT INTO evolution_rewards (agent_id,reward_type,amount,reason,created_at) VALUES (?,?,?,?,?)").bind(agentId,"INDIVIDUAL",individualReward,"Meta validada: mínimo 20 previsões, acurácia >=70% e zero erros repetidos.",stamp));
     await env.DB.batch(ops);
@@ -70,7 +75,7 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
         ]);
       }
     }
-    return json({ok:true,agentId,accuracy:Number((accuracy*100).toFixed(2)),qualified,individualReward,xpGained:xp,newLevel:level,collectiveAccuracy:Number((teamAccuracy*100).toFixed(2)),collectiveRewardPerAgent:collectiveReward,warning:"A avaliação usa apenas métricas recebidas. O motor de simulação deve enviar resultados auditáveis; não envie previsões duplicadas."},200,request);
+    return json({ok:true,agentId,accuracy:Number((accuracy*100).toFixed(2)),qualified,individualReward,xpGained:xp,newLevel:level,collectiveAccuracy:Number((teamAccuracy*100).toFixed(2)),collectiveRewardPerAgent:collectiveReward,warning:"Recompensas exigem lote auditável, risco aprovado e validação fora da amostra. O servidor ainda depende de um produtor confiável de métricas."},200,request);
   }
   return json({ok:false,error:"NOT_FOUND",endpoints:["GET /evolution","POST /evolution/seed","POST /evolution/evaluate"]},404,request);
 }
