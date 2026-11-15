@@ -90,5 +90,8 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
    }
    return json({ok:true,model:MODEL,reply:parsed.reply,actions:parsed.actions},200,request);
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
+ },
+ async scheduled(controller,env,ctx) {
+  ctx.waitUntil(runAutonomousTick(env).catch(err=>console.error("MR_ZERO_ENGINE_TICK_FAILED",String(err&&err.message||err))));
  }
 };
