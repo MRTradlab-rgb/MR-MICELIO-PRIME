@@ -107,7 +107,15 @@ async function createForecasts(db,symbol,candles) {
     batch.push(db.prepare("INSERT OR IGNORE INTO engine_forecasts(forecast_key,agent_id,symbol,candle_open_time,target_open_time,direction,entry_price,strategy,score,confidence,regime,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDING',?)")
       .bind(forecastKey,a.id,symbol,candle.openTime,target,d.direction,f.last,a.strategy,d.score,d.confidence,f.volatility>0.002?"HIGH_VOL":f.trend>0.001?"UPTREND":f.trend< -0.001?"DOWNTREND":"RANGE",nowIso()));
   }
-  if(batch.length) await db.batch(batch);
+  if(batch.length) {
+    const inserted=await db.batch(batch);
+    for(let i=0;i<inserted.length;i++) {
+      if(Number(inserted[i].meta?.changes||0)===1) {
+        const agentId=AGENTS[i].id;
+        await db.prepare("UPDATE engine_agents SET total_forecasts=total_forecasts+1,updated_at=? WHERE agent_id=?").bind(nowIso(),agentId).run();
+      }
+    }
+  }
   return {created:batch.length,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
 }
 
