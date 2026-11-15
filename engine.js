@@ -8,6 +8,8 @@ const STRATEGIES = ["MOMENTUM","MEAN_REVERSION","BREAKOUT","VOLATILITY","TREND",
 const FEE_PER_SIDE = 0.001;
 const SLIPPAGE_PER_SIDE = 0.0005;
 const HORIZON_MINUTES = 3;
+const GROUPS = new Set(["CONSERVADOR","EXPLORADOR"]);
+const SYMBOL_SET = new Set(SYMBOLS);
 const nowIso = () => new Date().toISOString();
 const clamp = (x,a,b) => Math.max(a,Math.min(b,x));
 const mean = a => a.length ? a.reduce((s,x)=>s+x,0)/a.length : 0;
@@ -81,6 +83,7 @@ async function evaluateDue(db,symbol,candles) {
   const due=await db.prepare("SELECT id,agent_id,direction,entry_price,strategy FROM engine_forecasts WHERE symbol=? AND status='PENDING' AND target_open_time<=? LIMIT 500")
     .bind(symbol,latest.openTime).all();
   let evaluated=0;
+  const touchedAgents=new Set();
   for(const f of (due.results||[])) {
     const gross=(latest.close-Number(f.entry_price))/Number(f.entry_price)*(f.direction==="BUY"?1:-1);
     const net=gross-(2*FEE_PER_SIDE)-(2*SLIPPAGE_PER_SIDE);
@@ -92,8 +95,21 @@ async function evaluateDue(db,symbol,candles) {
         .bind(f.id,f.agent_id,symbol,f.strategy,net,outcome,nowIso()).run();
       await db.prepare("UPDATE engine_agents SET closed_forecasts=closed_forecasts+1,wins=wins+?,losses=losses+?,net_return_sum=net_return_sum+?,updated_at=? WHERE agent_id=?")
         .bind(outcome==="WIN"?1:0,outcome==="LOSS"?1:0,net,nowIso(),f.agent_id).run();
+      touchedAgents.add(f.agent_id);
       evaluated++;
     }
+  }
+  // Ajuste gradual de sensibilidade somente após amostra mínima; não troca a especialidade do agente.
+  for (const agentId of touchedAgents) {
+    const recent=await db.prepare("SELECT net_return FROM engine_evaluations WHERE agent_id=? ORDER BY id DESC LIMIT 20").bind(agentId).all();
+    const values=(recent.results||[]).map(x=>Number(x.net_return)).filter(Number.isFinite);
+    if(values.length<10) continue;
+    const avg=mean(values);
+    const row=await db.prepare("SELECT threshold FROM engine_agents WHERE agent_id=?").bind(agentId).first();
+    const current=Number(row?.threshold||0.0005);
+    const next=clamp(avg>0?current*0.98:current*1.05,0.0001,0.005);
+    await db.prepare("UPDATE engine_agents SET threshold=?,last_adapted_at=?,updated_at=? WHERE agent_id=?")
+      .bind(next,nowIso(),nowIso(),agentId).run();
   }
   return evaluated;
 }
@@ -103,7 +119,8 @@ async function createForecasts(db,symbol,candles) {
   const batch=[];
   const forecastAgents=[];
   let created=0;
-  for(const a of AGENTS) {
+  const active=await db.prepare("SELECT agent_id AS id,archetype,strategy,threshold,status FROM engine_agents WHERE status='ACTIVE'").all();
+  for(const a of (active.results||[])) {
     const d=decide(a,f);
     if(d.direction==="HOLD"||d.confidence<0.18) continue;
     const forecastKey=`${symbol}:${a.id}:${candle.openTime}`;
@@ -145,23 +162,78 @@ export async function runAutonomousTick(env) {
   return {ok:errors.length===0,runAt:stamp,durationMs:Date.now()-started,results,errors,realOrdersEnabled:false};
 }
 
+
+// Contexto compacto e factual que o Prime entrega à Gemma antes de cada decisão.
+export async function getPrimeContext(db) {
+  if(!db) return {engineReady:false,reason:"D1_BINDING_MISSING"};
+  try {
+    const [summary,leaders,recent]=await Promise.all([
+      db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN status='PAUSED' THEN 1 ELSE 0 END) AS paused FROM engine_agents").first(),
+      db.prepare("SELECT agent_id,archetype,strategy,status,closed_forecasts,wins,losses,net_return_sum FROM engine_agents ORDER BY net_return_sum DESC LIMIT 5").all(),
+      db.prepare("SELECT run_at,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 3").all()
+    ]);
+    return {engineReady:true,mode:"PAPER_ONLY",realOrdersEnabled:false,agents:summary||{},topAgents:leaders.results||[],recentRuns:recent.results||[],allowedActions:["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]};
+  } catch(e) { return {engineReady:false,reason:"ENGINE_SCHEMA_NOT_READY",detail:String(e?.message||e).slice(0,180)}; }
+}
+
+// Executa somente comandos estruturados e permitidos. Nunca recebe código livre nem habilita ordens reais.
+export async function executePrimeActions(db, actions) {
+  if(!db || !Array.isArray(actions) || !actions.length) return [];
+  const results=[];
+  for(const a of actions.slice(0,8)) {
+    const type=a?.type;
+    let target="", details={};
+    if(type==="pause_agent" || type==="resume_agent") {
+      if(!/^agent-(0[1-9]|[1-4][0-9]|50)$/.test(a.agentId||"")) {results.push({type,ok:false,error:"INVALID_AGENT"});continue;}
+      target=a.agentId;
+      const status=type==="pause_agent"?"PAUSED":"ACTIVE";
+      const r=await db.prepare("UPDATE engine_agents SET status=?,updated_at=? WHERE agent_id=?").bind(status,nowIso(),target).run();
+      details={status,changed:Number(r.meta?.changes||0)};
+    } else if(type==="pause_group" || type==="resume_group") {
+      const group=String(a.group||"").toUpperCase();
+      if(!GROUPS.has(group)) {results.push({type,ok:false,error:"INVALID_GROUP"});continue;}
+      target=group;
+      const status=type==="pause_group"?"PAUSED":"ACTIVE";
+      const r=await db.prepare("UPDATE engine_agents SET status=?,updated_at=? WHERE archetype=?").bind(status,nowIso(),group).run();
+      details={status,changed:Number(r.meta?.changes||0)};
+    } else if(type==="assign_mission") {
+      const group=String(a.group||"").toUpperCase(), mission=String(a.mission||"").trim().slice(0,240);
+      if(!GROUPS.has(group)||!mission) {results.push({type,ok:false,error:"INVALID_MISSION"});continue;}
+      target=group; details={mission};
+      await db.prepare("UPDATE engine_agents SET mission=?,updated_at=? WHERE archetype=?").bind(mission,nowIso(),group).run();
+    } else if(type==="analyze_health") {
+      const health=await db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN status='PAUSED' THEN 1 ELSE 0 END) AS paused,SUM(closed_forecasts) AS closed,SUM(wins) AS wins,SUM(losses) AS losses FROM engine_agents").first();
+      target="COLONY"; details={health};
+    } else if(type==="start_sandbox_experiment") {
+      const symbol=String(a.symbol||"").toUpperCase(), strategy=String(a.strategy||"").toUpperCase(), reason=String(a.reason||"").slice(0,240);
+      if(!SYMBOL_SET.has(symbol)||!STRATEGIES.includes(strategy)) {results.push({type,ok:false,error:"INVALID_EXPERIMENT"});continue;}
+      target=symbol; details={strategy,reason,mode:"PAPER_ONLY"};
+      await db.prepare("INSERT INTO engine_experiments(symbol,strategy,reason,status,created_at) VALUES (?,?,?,'PROPOSED',?)").bind(symbol,strategy,reason,nowIso()).run();
+    } else {results.push({type:type||"unknown",ok:false,error:"ACTION_NOT_ALLOWED"});continue;}
+    await db.prepare("INSERT INTO engine_prime_actions(action_type,target,details,created_at) VALUES (?,?,?,?)").bind(type,target,JSON.stringify(details),nowIso()).run();
+    results.push({type,ok:true,target,...details});
+  }
+  return results;
+}
+
 export async function handleEngine(request,env,url,json) {
   if(!env.DB) return json({ok:false,error:"D1_BINDING_MISSING"},503,request);
   if(request.method==="GET"&&url.pathname==="/engine/status") {
     await ensureAgents(env.DB);
-    const [agents,forecasts,runs,pending,last]=await Promise.all([
+    const [agents,forecasts,runs,pending,last,paused]=await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS total, SUM(closed_forecasts) AS closed, SUM(wins) AS wins, SUM(losses) AS losses, SUM(net_return_sum) AS net FROM engine_agents").first(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts").first(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_runs").first(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts WHERE status='PENDING'").first(),
-      env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 1").first()
+      env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 1").first(),
+      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_agents WHERE status='PAUSED'").first()
     ]);
     const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
-    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),activeAgents:Number(agents?.total||0)-Number(paused?.total||0),pausedAgents:Number(paused?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
   }
   if(request.method==="GET"&&url.pathname==="/engine/agents") {
     await ensureAgents(env.DB);
-    const rows=await env.DB.prepare("SELECT agent_id,archetype,strategy,threshold,total_forecasts,closed_forecasts,wins,losses,net_return_sum,CASE WHEN closed_forecasts>0 THEN ROUND(wins*100.0/closed_forecasts,2) ELSE NULL END AS net_win_rate,CASE WHEN closed_forecasts>0 THEN net_return_sum/closed_forecasts ELSE NULL END AS average_net_return,updated_at FROM engine_agents ORDER BY CASE WHEN closed_forecasts>=20 THEN 0 ELSE 1 END, net_return_sum DESC, net_win_rate DESC").all();
+    const rows=await env.DB.prepare("SELECT agent_id,archetype,strategy,threshold,status,mission,total_forecasts,closed_forecasts,wins,losses,net_return_sum,CASE WHEN closed_forecasts>0 THEN ROUND(wins*100.0/closed_forecasts,2) ELSE NULL END AS net_win_rate,CASE WHEN closed_forecasts>0 THEN net_return_sum/closed_forecasts ELSE NULL END AS average_net_return,updated_at FROM engine_agents ORDER BY CASE WHEN closed_forecasts>=20 THEN 0 ELSE 1 END, net_return_sum DESC, net_win_rate DESC").all();
     return json({ok:true,agents:rows.results||[],note:"Ranking exploratório; amostras pequenas não são evidência de vantagem estatística."},200,request);
   }
   if(request.method==="POST"&&url.pathname==="/engine/seed") {
