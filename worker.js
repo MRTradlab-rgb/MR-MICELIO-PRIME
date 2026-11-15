@@ -21,11 +21,28 @@ function cleanActions(actions) {
     return out;
   });
 }
+function extractText(result) {
+  if (typeof result === "string") return result;
+  if (!result || typeof result !== "object") return "";
+  if (typeof result.response === "string") return result.response;
+  if (typeof result.reply === "string") return result.reply;
+  const choice = Array.isArray(result.choices) ? result.choices[0] : null;
+  const message = choice && choice.message;
+  if (message && typeof message.content === "string") return message.content;
+  if (typeof result.output_text === "string") return result.output_text;
+  if (typeof result.text === "string") return result.text;
+  return "";
+}
 function parseModelOutput(result) {
-  let raw=typeof result==="string"?result:(result&&typeof result.response==="string"?result.response:JSON.stringify(result??{}));
+  const raw = extractText(result).trim();
+  if (!raw) return {reply:"Recebi uma resposta incompleta do modelo. Vou tentar novamente; nenhum comando foi executado.",actions:[]};
   const stripped=raw.replace(/^\x60\x60\x60(?:json)?\s*/i,"").replace(/\s*\x60\x60\x60$/,"").trim();
-  try { const parsed=JSON.parse(stripped); return {reply:typeof parsed.reply==="string"?parsed.reply:raw,actions:cleanActions(parsed.actions)}; }
-  catch { return {reply:raw,actions:[]}; }
+  try {
+    const parsed=JSON.parse(stripped);
+    return {reply:typeof parsed.reply==="string"?parsed.reply:"Não consegui interpretar a resposta do modelo.",actions:cleanActions(parsed.actions)};
+  } catch {
+    return {reply:stripped.slice(0,5000),actions:[]};
+  }
 }
 export default {
  async fetch(request,env) {
@@ -60,7 +77,7 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
   const conversationText=safeMessages.map(m=>m.role.toUpperCase()+": "+m.content).join("\n");
   const prompt=system+"\n\nCONTEXTO ATUAL DO LABORATÓRIO:\n"+contextText+"\n\nCONVERSA RECENTE:\n"+conversationText+"\n\nMENSAGEM ATUAL:\n"+userMessage.slice(0,4000)+"\n\nResponda no JSON exigido.";
   try {
-   const result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_completion_tokens:900,temperature:0.35});
+   const result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_completion_tokens:1400,temperature:0.25});
    const parsed=parseModelOutput(result);
    return json({ok:true,model:MODEL,reply:parsed.reply,actions:parsed.actions},200,request);
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
