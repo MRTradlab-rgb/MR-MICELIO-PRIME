@@ -54,9 +54,9 @@ export default {
   if(!env.AI) return json({ok:false,error:"Workers AI binding 'AI' is not configured."},503,request);
   let body; try {body=await request.json();} catch {return json({ok:false,error:"Invalid JSON body."},400,request);}
   const sourceMessages=Array.isArray(body.messages)?body.messages:(Array.isArray(body.conversation)?body.conversation:[]);
-  const messages=sourceMessages.slice(-12), userMessage=typeof body.message==="string"?body.message:"";
+  const messages=sourceMessages.slice(-4), userMessage=typeof body.message==="string"?body.message:"";
   const context=body.context&&typeof body.context==="object"?body.context:(body.lab&&typeof body.lab==="object"?body.lab:{});
-  const safeMessages=messages.map(m=>({role:m&&m.role==="assistant"?"assistant":"user",content:String(m&&m.content||"").slice(0,4000)}));
+  const safeMessages=messages.map(m=>({role:m&&m.role==="assistant"?"assistant":"user",content:String(m&&m.content||"").slice(0,700)}));
   const system=`Você é o MR Micélio Prime, coordenador de um laboratório de pesquisa e desenvolvimento de IA.
 Sua missão é dialogar, explicar, pesquisar conceitos, propor experimentos verificáveis e coordenar agentes.
 O Micélio é um ambiente coletivo de pesquisa; os agentes são pesquisadores especializados.
@@ -73,12 +73,17 @@ REGRAS:
 - Retorne SOMENTE JSON válido no formato: {"reply":"resposta ao usuário","actions":[]}
 Ações permitidas: pause_agent {agentId}, resume_agent {agentId}, pause_group {group}, resume_group {group}, assign_mission {group, mission}, analyze_health {}, start_sandbox_experiment {symbol, strategy, reason}.
 Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
-  const contextText=JSON.stringify(context).slice(0,12000);
+  const contextText=JSON.stringify(context).slice(0,3500);
   const conversationText=safeMessages.map(m=>m.role.toUpperCase()+": "+m.content).join("\n");
-  const prompt=system+"\n\nCONTEXTO ATUAL DO LABORATÓRIO:\n"+contextText+"\n\nCONVERSA RECENTE:\n"+conversationText+"\n\nMENSAGEM ATUAL:\n"+userMessage.slice(0,4000)+"\n\nResponda no JSON exigido.";
+  const prompt=system+"\n\nCONTEXTO ATUAL DO LABORATÓRIO:\n"+contextText+"\n\nCONVERSA RECENTE:\n"+conversationText+"\n\nMENSAGEM ATUAL:\n"+userMessage.slice(0,1500)+"\n\nResponda no JSON exigido.";
   try {
-   const result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_completion_tokens:1400,temperature:0.25});
-   const parsed=parseModelOutput(result);
+   let result=await env.AI.run(MODEL,{messages:[{role:"user",content:prompt}],max_tokens:512,temperature:0.2});
+   let parsed=parseModelOutput(result);
+   if(!extractText(result).trim()) {
+    const compact="Você é MR Micélio Prime. Responda em português brasileiro, com clareza e em no máximo 5 frases. Não invente dados. Ações permitidas somente se necessárias: "+Array.from(ALLOWED_ACTIONS).join(", ")+". Retorne JSON válido: {\\"reply\\":\\"texto\\",\\"actions\\":[]}\nMensagem: "+userMessage.slice(0,1000)+"\nContexto resumido: "+contextText.slice(0,1200);
+    result=await env.AI.run(MODEL,{messages:[{role:"user",content:compact}],max_tokens:512,temperature:0.1});
+    parsed=parseModelOutput(result);
+   }
    return json({ok:true,model:MODEL,reply:parsed.reply,actions:parsed.actions},200,request);
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
  }
