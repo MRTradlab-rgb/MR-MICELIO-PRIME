@@ -12,18 +12,18 @@
 ## Ativação Cloudflare
 1. No banco D1 já destinado ao Micélio Prime (mr-micelio-evolution), execute a migration existente migrations/0001_micelio_evolution.sql se ainda não foi aplicada.
 2. Execute migrations/0002_zero_autonomous_engine.sql no mesmo banco.
-3. No Worker mr-micelio, confirme o binding D1 com variável DB apontando para esse banco.
-4. Crie o secret ENGINE_ADMIN_TOKEN com um valor forte e exclusivo. Não coloque esse token no HTML, GitHub ou mensagens públicas.
-5. A configuração wrangler.toml adiciona Cron * * * * *. Após publicar esta branch na configuração do Worker, confirme que o Cron Trigger está ativo.
-6. Faça deploy e consulte GET /engine/status. A resposta deve mostrar 50 agentes e mode: PAPER_ONLY.
+4. No Worker mr-micelio, confirme o binding D1 com variável DB apontando para esse banco.
+5. Crie o secret ENGINE_ADMIN_TOKEN com um valor forte e exclusivo. Não coloque esse token no HTML, GitHub ou mensagens públicas.
+6. A configuração wrangler.toml adiciona Cron * * * * *. Após publicar esta branch na configuração do Worker, confirme que o Cron Trigger está ativo.
+7. Faça deploy e consulte GET /engine/status. A resposta deve mostrar 50 agentes e mode: PAPER_ONLY.
 
 ## Endpoints
 - GET /engine/status: estado, contadores e última execução.
-- GET /engine/agents: ranking exploratório dos 50 agentes.
+- GET /engine/agents: ranking exploratório dos 50 agentes, com status e missão.\n- POST /chat: Gemma recebe contexto do motor e pode executar comandos estruturados autorizados; o resultado aparece em `executedActions`.
 - POST /engine/seed: inicializa os 50 agentes; exige Authorization: Bearer ENGINE_ADMIN_TOKEN.
 - POST /engine/tick: executa um ciclo manual; exige o mesmo Bearer token. O Cron executa automaticamente.
 
-## Limitações deliberadas desta fase
+## Coordenação Prime e aprendizagem adaptativa\n- Gemma recebe resumo de agentes, líderes e últimas execuções antes de responder.\n- O executor aceita somente comandos estruturados permitidos: pausar/retomar agente ou grupo, atribuir missão, analisar saúde e registrar experimento PAPER_ONLY.\n- Toda ação executada é registrada em `engine_prime_actions`; experimentos são registrados em `engine_experiments`.\n- Após pelo menos 10 avaliações recentes por agente, o limiar de entrada é ajustado gradualmente conforme o retorno líquido médio. A estratégia especialista não é trocada automaticamente nesta fase.\n- Pausar um agente impede novas previsões dele; previsões já abertas continuam sendo avaliadas.\n\n## Limitações deliberadas desta fase
 - O ciclo é de um minuto com candles REST fechados, não um WebSocket persistente por segundo.
 - A fase atual não cria ordens, não lê saldo, não acessa carteira, não recebe chaves Binance e não possui endpoint de execução.
 - A previsão é uma hipótese estatística, não uma garantia de acerto.
