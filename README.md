@@ -31,3 +31,8 @@ O repositório está preparado para Cloudflare Workers Builds:
 - Ações são limitadas a uma lista permitida e não executam código arbitrário.
 - Operações financeiras reais permanecem desabilitadas; use simulação.
 - A disponibilidade e a cota do modelo dependem da conta e das regras atuais da Cloudflare.
+
+
+## Motor autônomo MR TradLab ZERO
+
+A branch feature/zero-autonomous-50-agents adiciona um motor de simulação contínua com 50 agentes, candles públicos Binance de 1 minuto, previsões avaliadas após 3 minutos, persistência D1 e Cron a cada minuto. A fase é exclusivamente PAPER_ONLY: não há endpoint de ordens, leitura de carteira ou chaves privadas. Consulte ZERO_ENGINE_SETUP.md para ativação e limites.
