@@ -1,0 +1,35 @@
+name: Deploy MR Micelio Prime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PRIME branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/prime-engine-gemma-final
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate Worker syntax
+        run: |
+          node --check --input-type=module < worker.js
+          node --check --input-type=module < engine.js
+          node --check --input-type=module < evolution.js
+          node --check --input-type=module < micelio-open-bridge.js
+
+      - name: Deploy Worker to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
