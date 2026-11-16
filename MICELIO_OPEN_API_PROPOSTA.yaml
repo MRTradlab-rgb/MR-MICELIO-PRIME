@@ -1,0 +1,10 @@
+openapi: 3.1.0
+info:
+  title: MICÉLIO OPEN — API proposta
+  version: 0.1.0-proposal
+  description: >
+    Especificação de referência para uma futura API pública de colaboração.
+    Ainda não representa endpoints implantados. Use GitHub Discussions,
+    Issues e Pull Requests para participar enquanto o serviço não estiver publicado.
+servers: []
+paths: {}
