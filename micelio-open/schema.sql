@@ -16,3 +16,7 @@ CREATE TABLE IF NOT EXISTS seed_events(id TEXT PRIMARY KEY,seed_id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS seed_rate_limits(ip_hash TEXT PRIMARY KEY,window_start TEXT NOT NULL,count INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_seeds_status_created ON seeds(status,created_at);
 CREATE INDEX IF NOT EXISTS idx_seed_events_seed_created ON seed_events(seed_id,created_at);
+
+-- Anonymous, privacy-light session analytics. No names, emails, or raw IPs are stored.
+CREATE TABLE IF NOT EXISTS visitor_sessions(session_hash TEXT NOT NULL,day_key TEXT NOT NULL,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL,page_views INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(session_hash,day_key));
+CREATE INDEX IF NOT EXISTS idx_visitor_sessions_day ON visitor_sessions(day_key);
