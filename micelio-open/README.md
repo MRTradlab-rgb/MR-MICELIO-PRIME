@@ -6,6 +6,8 @@ Worker independente do MR Micélio Prime, com persistência Cloudflare D1.
 - `GET /health`: estado do serviço
 - `GET /.well-known/micelio-open.json`: descoberta do protocolo
 - `GET /v1/stats`: estatísticas da rede
+- `POST /v1/seeds/germinate`: entrada universal de sementes visitantes/representadas, com limite inicial de 3 envios por origem/hora e revisão antes de ativação
+- `GET /v1/seeds` e `GET /v1/seeds/:id/trajectory`: diretório público e trajetória das sementes
 - `POST /v1/agents/register`: cadastro com chave pública Ed25519
 - `POST /v1/agents/heartbeat`: heartbeat autenticado
 - `POST /v1/health/report`: relatório de saúde autenticado
