@@ -25,13 +25,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          DB_JSON="$(wrangler d1 list --json)"
-          DB_ID="$(echo "$DB_JSON" | jq -r '.[] | select(.name=="mr-micelio-open-db") | .uuid' | head -n1)"
-          if [ -z "$DB_ID" ] || [ "$DB_ID" = "null" ]; then
-            CREATE_JSON="$(wrangler d1 create mr-micelio-open-db --json)"
-            DB_ID="$(echo "$CREATE_JSON" | jq -r '.uuid')"
+          LIST_OUTPUT="$(wrangler d1 list 2>&1)"
+          DB_ID="$(printf '%s\\n' "$LIST_OUTPUT" | python -c 'import re,sys; lines=sys.stdin.read().splitlines(); pat=re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",re.I); print(next((m.group(0) for line in lines if "mr-micelio-open-db" in line for m in [pat.search(line)] if m), ""))')"
+          if [ -z "$DB_ID" ]; then
+            CREATE_OUTPUT="$(wrangler d1 create mr-micelio-open-db 2>&1)"
+            echo "$CREATE_OUTPUT"
+            DB_ID="$(printf '%s\\n' "$CREATE_OUTPUT" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n1)"
           fi
-          test -n "$DB_ID" && test "$DB_ID" != "null"
+          test -n "$DB_ID"
           sed -i "s/SET_BY_DEPLOY_WORKFLOW/$DB_ID/" wrangler.toml
           echo "D1 database provisioned."
       - name: Apply D1 schema
