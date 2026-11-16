@@ -1,0 +1,48 @@
+name: Deploy MICELIO OPEN
+on:
+  push:
+    branches: [deploy/micelio-open-independent]
+    paths:
+      - 'micelio-open/**'
+      - '.github/workflows/deploy-micelio-open.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Wrangler
+        run: npm install --global wrangler
+      - name: Provision persistent D1 database
+        working-directory: micelio-open
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          DB_JSON="$(wrangler d1 list --json)"
+          DB_ID="$(echo "$DB_JSON" | jq -r '.[] | select(.name=="mr-micelio-open-db") | .uuid' | head -n1)"
+          if [ -z "$DB_ID" ] || [ "$DB_ID" = "null" ]; then
+            CREATE_JSON="$(wrangler d1 create mr-micelio-open-db --json)"
+            DB_ID="$(echo "$CREATE_JSON" | jq -r '.uuid')"
+          fi
+          test -n "$DB_ID" && test "$DB_ID" != "null"
+          sed -i "s/SET_BY_DEPLOY_WORKFLOW/$DB_ID/" wrangler.toml
+          echo "D1 database provisioned."
+      - name: Apply D1 schema
+        working-directory: micelio-open
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: wrangler d1 execute mr-micelio-open-db --remote --file=./schema.sql
+      - name: Deploy Worker
+        working-directory: micelio-open
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: wrangler deploy
