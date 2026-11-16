@@ -47,3 +47,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: wrangler deploy
+      - name: Smoke test public endpoints
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error https://mr-micelio-open.felipe-revolt.workers.dev/health | tee /tmp/health.json
+          grep -q 'micelio-open' /tmp/health.json
+          curl --fail --silent --show-error https://mr-micelio-open.felipe-revolt.workers.dev/v1/stats | tee /tmp/stats.json
+          grep -q 'authenticated_agents' /tmp/stats.json
+          echo 'MICELIO OPEN health and D1 stats endpoints passed.'
