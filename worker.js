@@ -4,6 +4,7 @@
  * Required binding: AI (Workers AI)
  */
 import { handleEvolution } from "./evolution.js";
+import { reportPrimeHealthToOpen } from "./micelio-open-bridge.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
@@ -98,6 +99,16 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
  },
  async scheduled(controller,env,ctx) {
-  ctx.waitUntil(runAutonomousTick(env).catch(err=>console.error("MR_ZERO_ENGINE_TICK_FAILED",String(err&&err.message||err))));
+  ctx.waitUntil((async()=>{
+    const tick = await runAutonomousTick(env).catch(err=>{
+      console.error("MR_ZERO_ENGINE_TICK_FAILED",String(err&&err.message||err));
+      return {ok:false,error:String(err&&err.message||err)};
+    });
+    const bridge = await reportPrimeHealthToOpen(env).catch(err=>{
+      console.error("MICELIO_OPEN_BRIDGE_FAILED",String(err&&err.message||err));
+      return {ok:false,error:String(err&&err.message||err)};
+    });
+    console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({tickOk:tick?.ok===true,bridgeOk:bridge?.ok===true,bridgeSkipped:bridge?.skipped===true}));
+  })());
  }
 };
