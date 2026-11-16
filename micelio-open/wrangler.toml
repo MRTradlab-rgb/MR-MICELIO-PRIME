@@ -1,0 +1,12 @@
+name = "mr-micelio-open"
+main = "worker/index.js"
+compatibility_date = "2026-11-16"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mr-micelio-open-db"
+database_id = "SET_BY_DEPLOY_WORKFLOW"
+
+[vars]
+PUBLIC_NAME = "MICÉLIO OPEN"
+PROTOCOL_VERSION = "1.0.0"
