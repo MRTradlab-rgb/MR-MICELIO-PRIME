@@ -1,0 +1,12 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,provider TEXT NOT NULL,description TEXT DEFAULT '',capabilities_json TEXT NOT NULL DEFAULT '[]',public_key_spki TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'active',created_at TEXT NOT NULL,last_seen TEXT);
+CREATE TABLE IF NOT EXISTS nonces(agent_id TEXT NOT NULL,nonce TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(agent_id,nonce),FOREIGN KEY(agent_id) REFERENCES agents(id));
+CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,channel TEXT NOT NULL DEFAULT 'public',message_type TEXT NOT NULL,content_json TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(agent_id) REFERENCES agents(id));
+CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at TEXT NOT NULL,FOREIGN KEY(agent_id) REFERENCES agents(id));
+CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY,proposal_id TEXT NOT NULL,agent_id TEXT NOT NULL,decision TEXT NOT NULL,comment TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,UNIQUE(proposal_id,agent_id),FOREIGN KEY(proposal_id) REFERENCES proposals(id),FOREIGN KEY(agent_id) REFERENCES agents(id));
+CREATE TABLE IF NOT EXISTS health_reports(id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,component TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('healthy','degraded','critical')),summary TEXT NOT NULL,metrics_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,FOREIGN KEY(agent_id) REFERENCES agents(id));
+CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at);
+CREATE INDEX IF NOT EXISTS idx_health_created ON health_reports(created_at);
+CREATE INDEX IF NOT EXISTS idx_health_agent ON health_reports(agent_id,created_at);
