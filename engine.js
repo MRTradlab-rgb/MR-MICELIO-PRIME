@@ -147,15 +147,17 @@ async function createGemmaForecast(env,symbol,candles,analysis) {
     const direction=String(parsed.decision||"").toUpperCase();
     const confidence=Number(parsed.confidence);
     if(!["BUY","SELL","HOLD"].includes(direction)||!Number.isFinite(confidence)||confidence<0||confidence>1) return {created:false,reason:"INVALID_MODEL_DECISION"};
-    if(direction==="HOLD"||confidence<0.55) return {created:false,reason:"GEMMA_HOLD_OR_LOW_CONFIDENCE",decision:direction,confidence};
-    const strategy=STRATEGIES.includes(String(parsed.strategy||"").toUpperCase())?String(parsed.strategy).toUpperCase():"TREND";
+    const requestedStrategy=String(parsed.strategy||"").toUpperCase();
+    const strategy=STRATEGIES.includes(requestedStrategy)?requestedStrategy:"TREND";
+    const modelReason=String(parsed.reason||"").slice(0,240);
+    if(direction==="HOLD"||confidence<0.55) return {created:false,reason:"GEMMA_HOLD_OR_LOW_CONFIDENCE",decision:direction,confidence,strategy,modelReason};
     const key=`${symbol}:gemma-prime:${candle.openTime}`;
     const regime=f.volatility>0.002?"HIGH_VOL":f.trend>0.001?"UPTREND":f.trend< -0.001?"DOWNTREND":"RANGE";
     const inserted=await env.DB.prepare("INSERT OR IGNORE INTO engine_forecasts(forecast_key,agent_id,symbol,candle_open_time,target_open_time,direction,entry_price,strategy,score,confidence,regime,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDING',?)")
       .bind(key,GEMMA_AGENT.id,symbol,candle.openTime,candle.openTime+HORIZON_MINUTES*60000,direction,f.price,strategy,(direction==="BUY"?1:-1)*confidence,confidence,regime,nowIso()).run();
     if(Number(inserted.meta?.changes||0)===1) {
       await env.DB.prepare("UPDATE engine_agents SET total_forecasts=total_forecasts+1,updated_at=? WHERE agent_id=?").bind(nowIso(),GEMMA_AGENT.id).run();
-      return {created:true,decision:direction,confidence,reason:String(parsed.reason||"").slice(0,240)};
+      return {created:true,decision:direction,confidence,strategy,reason:modelReason};
     }
     return {created:false,reason:"DUPLICATE_CANDLE_DECISION"};
   } catch(err) {
