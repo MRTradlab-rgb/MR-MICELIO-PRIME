@@ -132,13 +132,10 @@ async function createGemmaForecast(env,symbol,candles,analysis) {
   const candle=candles.at(-1), f=analysis.features;
   // Horizon-aligned cadence: one decision per symbol every three minutes, avoiding needless inference every cron tick.
   if(Math.floor(candle.openTime/60000)%HORIZON_MINUTES!==0) return {created:false,reason:"WAITING_FOR_GEMMA_CYCLE"};
-  const signals=analysis.agentSignals||[];
-  const buys=signals.filter(x=>x.direction==="BUY").length;
-  const sells=signals.filter(x=>x.direction==="SELL").length;
-  const holds=signals.length-buys-sells;
-  const strongest=signals.filter(x=>x.direction!=="HOLD").sort((a,b)=>b.confidence-a.confidence).slice(0,12);
-  const input={symbol,price:f.price,indicators:{r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,mean20:f.mean20,zscore:f.zscore,breakout:f.breakout,volumeRatio:f.volumeRatio},micelioConsensus:{buy:buys,sell:sells,hold:holds,total:signals.length},strongestAgentSignals:strongest};
-  const prompt=`Você é Gemma Prime, agente autônomo de PAPER TRADING do MR TradLab ZERO. Tome uma decisão individual usando EXCLUSIVAMENTE os dados técnicos e sinais dos agentes do Micélio fornecidos no JSON. Não invente preços, indicadores, notícias ou dados externos. BUY significa abrir posição comprada simulada; SELL significa abrir posição vendida simulada; HOLD significa não abrir operação. Considere taxas e slippage já configurados no motor. Evite operar se o consenso for fraco ou contraditório. Retorne somente JSON válido: {"decision":"BUY|SELL|HOLD","confidence":0.0,"strategy":"MOMENTUM|MEAN_REVERSION|BREAKOUT|VOLATILITY|TREND|CONTRARIAN|ENSEMBLE","reason":"justificativa curta baseada nos dados"}. JSON de análise: ${JSON.stringify(input)}`;
+  // Gemma receives only the shared market snapshot and technical indicators.
+  // No Micelio agent signals or consensus are passed into this independent analysis.
+  const input={symbol,price:f.price,indicators:{r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,mean20:f.mean20,zscore:f.zscore,breakout:f.breakout,volumeRatio:f.volumeRatio}};
+  const prompt=`Você é Gemma Prime, agente autônomo de análise e PAPER TEST do MR TradLab ZERO. Tome uma decisão independente usando EXCLUSIVAMENTE o preço e os indicadores técnicos do JSON. Você NÃO recebe sinais, consenso, ranking ou conclusões dos agentes do Micélio. Não invente preços, indicadores, notícias ou dados externos. BUY significa sinal de compra simulada; SELL significa sinal de venda simulada; HOLD significa aguardar. Considere taxas e slippage já configurados no motor. Retorne somente JSON válido: {"decision":"BUY|SELL|HOLD","confidence":0.0,"strategy":"MOMENTUM|MEAN_REVERSION|BREAKOUT|VOLATILITY|TREND|CONTRARIAN|ENSEMBLE","reason":"justificativa curta baseada nos dados"}. Dados de mercado: ${JSON.stringify(input)}`;
   try {
     const result=await env.AI.run("@cf/google/gemma-4-26b-a4b-it",{messages:[{role:"user",content:prompt}],max_tokens:220,temperature:0.1});
     let raw=typeof result==="string"?result:(result?.response||result?.output_text||result?.text||result?.choices?.[0]?.message?.content||"");
