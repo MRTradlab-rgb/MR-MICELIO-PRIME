@@ -173,7 +173,7 @@ export async function runAutonomousTick(env) {
     const evaluated=await evaluateDue(env.DB,symbol,candles);
     const forecast=await createForecasts(env.DB,symbol,candles);
     const gemma=await createGemmaForecast(env,symbol,candles,forecast);
-    return {symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,gemma,features:forecast.features};
+    return {symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,gemma,features:forecast.features,agentSignals:forecast.agentSignals};
   }));
   outcomes.forEach((item,i)=>{
     if(item.status==="fulfilled") results.push(item.value);
@@ -198,6 +198,13 @@ export async function handleEngine(request,env,url,json) {
     ]);
     const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
     return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+  }
+  if(request.method==="GET"&&url.pathname==="/engine/logs") {
+    const limit=Math.max(1,Math.min(200,Number(url.searchParams.get("limit")||50)));
+    const offset=Math.max(0,Math.min(100000,Number(url.searchParams.get("offset")||0)));
+    const rows=await env.DB.prepare("SELECT id,run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated,details FROM engine_runs ORDER BY id DESC LIMIT ? OFFSET ?").bind(limit,offset).all();
+    const total=await env.DB.prepare("SELECT COUNT(*) AS total FROM engine_runs").first();
+    return json({ok:true,logs:(rows.results||[]).map(row=>({...row,details:JSON.parse(row.details||"{}")})),total:Number(total?.total||0),limit,offset,retention:"D1 persistent; export a local copy for long-term archive"},200,request);
   }
   if(request.method==="GET"&&url.pathname==="/engine/agents") {
     await ensureAgents(env.DB);
