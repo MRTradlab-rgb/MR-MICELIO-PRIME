@@ -47,3 +47,28 @@ A branch também inclui uma tela estática em `public/logs.html`, servida pelo W
 - Não é necessário criar nova tabela ou migration: a tela reutiliza a tabela `engine_runs` já criada pela migration 0002.
 
 Depois de publicar a branch com o novo binding de Assets e o Worker atualizado, abra `/logs`. Se o banco ainda não tiver a migration 0002 aplicada, a tela informará falha de consulta; aplique a migration antes de usar.
+
+## Preparação do ledger da corrida (migration 0004)
+A migration `0004_race_ledger.sql` cria o schema canônico para:
+- estado global da corrida;
+- carteiras Gemma Prime e Micélio Ensemble, com US$ 10 de caixa inicial;
+- posições por competidor/ativo;
+- operações idempotentes por chave de execução;
+- decisões, sinais individuais dos agentes e snapshots de patrimônio.
+
+Ela preserva as tabelas provisórias criadas pela migration 0003, renomeando-as para sufixo `_legacy`; não apaga os registros anteriores. **Não execute manualmente a migration isolada fora da ordem do Wrangler.** Primeiro confira `wrangler d1 migrations list mr-micelio-prime-db`, depois aplique as migrations pendentes.
+
+## API inicial de leitura da corrida
+- `GET /race/status`: estado, carteiras, marcação das posições, validade dos candles disponíveis e lista de agentes.
+- `GET /race/leaderboard`: ranking por patrimônio calculado.
+- `GET /race/portfolio?competitor=gemma-prime|micelio-ensemble`
+- `GET /race/history`: operações registradas, com filtros de competidor/ativo/período.
+- `GET /race/export?format=json|csv`: exporta trades, decisões e snapshots.
+- `POST /race/stop`: rota administrativa protegida.
+- `POST /race/start`: permanece deliberadamente bloqueada com HTTP 409 até que o ciclo de previsões seja integrado ao ledger de operações e passe pelos testes de ponta a ponta.
+
+## Testes do núcleo de risco
+O módulo puro `src/race-core.mjs` contém cálculo de equity, validação de preço/idade, sizing limitado, execução BUY/SELL sem crédito ou venda descoberta e consenso auditável. Os testes estão em `tests/race.test.mjs` e são executados por `npm test` e GitHub Actions.
+
+## Limite atual — sem largada
+O schema, os cálculos puros e endpoints de leitura estão preparados no código. Ainda falta integrar o ciclo do Cron às decisões e operações do ledger (incluindo HOLD, posições, fechamento, snapshots e detecção do vencedor). Portanto, as carteiras semeadas pela migration não significam que a corrida esteja rodando. Não publicar como corrida ativa até concluir essa integração, aplicar as migrations no D1 remoto, fazer deploy e validar o runtime.
