@@ -26,3 +26,9 @@ A corrida continua **LOCKED / NÃO INICIADA**. A migration `0003_race_portfolios
 6. Somente então alterar o estado para READY e permitir início administrativo.
 
 Nenhuma carteira, operação, vitória ou saldo deve ser apresentado como real antes de existir registro persistido e validação de runtime.
+
+## Endpoints iniciais adicionados
+- `GET /race/status`: consulta o estado, carteiras e contagens; retorna bloqueios explícitos.
+- `POST /race/initialize`: inicializa idempotentemente o estado LOCKED e os dois caixas de US$ 10; exige `Authorization: Bearer ENGINE_ADMIN_TOKEN`.
+
+A inicialização não abre operações e não inicia a corrida. A API foi adicionada ao Worker, mas depende do deploy e da migration 0003 aplicada no D1. A integração de posições com as previsões ainda não foi concluída.
