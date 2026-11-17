@@ -1,3 +1,10 @@
+-- 0003 created an earlier provisional race schema. Preserve it under legacy names
+-- before creating the canonical schema below; no rows are dropped.
+ALTER TABLE race_ledger RENAME TO race_ledger_legacy;
+ALTER TABLE race_positions RENAME TO race_positions_legacy;
+ALTER TABLE race_wallets RENAME TO race_wallets_legacy;
+ALTER TABLE race_state RENAME TO race_state_legacy;
+
 -- MR TradLab ZERO canonical race ledger schema. Additive: preserves engine/evolution history.
 PRAGMA foreign_keys = ON;
 
