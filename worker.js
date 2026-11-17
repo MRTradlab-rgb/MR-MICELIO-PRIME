@@ -7,9 +7,32 @@ import { handleEvolution } from "./evolution.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
+async function requireAdminAccess(ctx, env) {
+  // Cloudflare Access must authenticate the request before private routes run.
+  if (!ctx?.access || typeof ctx.access.getIdentity !== "function") {
+    return { ok: false, status: 401 };
+  }
+  try {
+    const identity = await ctx.access.getIdentity();
+    const email = typeof identity?.email === "string" ? identity.email.trim().toLowerCase() : "";
+    const allowedEmail = typeof env.ACCESS_ADMIN_EMAIL === "string"
+      ? env.ACCESS_ADMIN_EMAIL.trim().toLowerCase()
+      : "";
+    if (!email || !allowedEmail) return { ok: false, status: 403 };
+    if (email !== allowedEmail) return { ok: false, status: 403 };
+    return { ok: true, email };
+  } catch {
+    return { ok: false, status: 401 };
+  }
+}
+const ALLOWED_ORIGINS = new Set([
+  "https://id-preview--2efa102a-7dbe-4296-9ca1-4877f0b854ff.lovable.app"
+]);
 function corsHeaders(request) {
-  const origin = request.headers.get("Origin") || "*";
-  return {"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400"};
+  const origin = request.headers.get("Origin");
+  const headers = {"Vary":"Origin","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400"};
+  if (origin && ALLOWED_ORIGINS.has(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
 }
 function json(data,status,request) {
   return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=utf-8",...corsHeaders(request)}});
@@ -47,9 +70,14 @@ function parseModelOutput(result) {
   }
 }
 export default {
- async fetch(request,env) {
-  if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
+ async fetch(request,env,ctx) {
   const url=new URL(request.url);
+  if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
+  const isPrivateRoute = url.pathname === "/chat" || url.pathname.startsWith("/engine") || url.pathname.startsWith("/evolution");
+  if (isPrivateRoute) {
+    const access = await requireAdminAccess(ctx, env);
+    if (!access.ok) return json({ok:false,error:access.status===403?"ADMIN_ACCESS_DENIED":"CLOUDFLARE_ACCESS_REQUIRED"},access.status,request);
+  }
   if(url.pathname.startsWith("/engine")) return handleEngine(request,env,url,json);
   if(url.pathname.startsWith("/evolution")) return handleEvolution(request,env,url,corsHeaders,json);
   if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat","GET /engine/status","GET /engine/agents","POST /engine/seed","POST /engine/tick"],health:"/health"},200,request);
