@@ -19,5 +19,7 @@ jobs:
           node --check --input-type=module < worker.js
           node --check --input-type=module < engine.js
           node --check --input-type=module < evolution.js
+          node --check --input-type=module < race.js
+          node --check src/race-core.mjs
       - name: Check whitespace
         run: git diff --check
