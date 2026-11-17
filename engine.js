@@ -163,17 +163,26 @@ export async function runAutonomousTick(env) {
 }
 
 
-// Contexto compacto e factual que o Prime entrega à Gemma antes de cada decisão.
+// Contexto factual completo: os 50 agentes, métricas individuais e estado operacional.
 export async function getPrimeContext(db) {
-  if(!db) return {engineReady:false,reason:"D1_BINDING_MISSING"};
+  if(!db) return {engineReady:false,reason:"D1_BINDING_MISSING",agents:[]};
   try {
-    const [summary,leaders,recent]=await Promise.all([
-      db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN status='PAUSED' THEN 1 ELSE 0 END) AS paused FROM engine_agents").first(),
-      db.prepare("SELECT agent_id,archetype,strategy,status,closed_forecasts,wins,losses,net_return_sum FROM engine_agents ORDER BY net_return_sum DESC LIMIT 5").all(),
-      db.prepare("SELECT run_at,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 3").all()
+    const [summary,agents,pending,recent]=await Promise.all([
+      db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN status='PAUSED' THEN 1 ELSE 0 END) AS paused,SUM(total_forecasts) AS forecasts,SUM(closed_forecasts) AS closed,SUM(wins) AS wins,SUM(losses) AS losses,SUM(net_return_sum) AS netReturn FROM engine_agents").first(),
+      db.prepare("SELECT agent_id,archetype,strategy,status,mission,threshold,total_forecasts,closed_forecasts,wins,losses,net_return_sum,CASE WHEN closed_forecasts>0 THEN ROUND(wins*100.0/closed_forecasts,2) ELSE NULL END AS winRatePct,CASE WHEN closed_forecasts>0 THEN net_return_sum/closed_forecasts ELSE NULL END AS averageNetReturn,updated_at FROM engine_agents ORDER BY agent_id").all(),
+      db.prepare("SELECT agent_id,COUNT(*) AS pendingForecasts FROM engine_forecasts WHERE status='PENDING' GROUP BY agent_id").all(),
+      db.prepare("SELECT run_at,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 5").all()
     ]);
-    return {engineReady:true,mode:"PAPER_ONLY",realOrdersEnabled:false,agents:summary||{},topAgents:leaders.results||[],recentRuns:recent.results||[],allowedActions:["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]};
-  } catch(e) { return {engineReady:false,reason:"ENGINE_SCHEMA_NOT_READY",detail:String(e?.message||e).slice(0,180)}; }
+    const pendingByAgent=Object.fromEntries((pending.results||[]).map(x=>[x.agent_id,Number(x.pendingForecasts||0)]));
+    const fullAgents=(agents.results||[]).map(a=>({...a,pendingForecasts:pendingByAgent[a.agent_id]||0}));
+    return {
+      engineReady:true,mode:"PAPER_ONLY",realOrdersEnabled:false,
+      agentCount:fullAgents.length,agentsSummary:summary||{},agents:fullAgents,
+      recentRuns:recent.results||[],
+      dataNotes:["A lista agents contém todos os registros atualmente existentes em engine_agents.","winRatePct é taxa histórica de acertos; não prova rentabilidade futura.","averageNetReturn e net_return_sum usam os custos simulados configurados no motor.","Agentes sem previsões encerradas aparecem com winRatePct e averageNetReturn nulos."],
+      allowedActions:["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]
+    };
+  } catch(e) { return {engineReady:false,reason:"ENGINE_SCHEMA_NOT_READY",detail:String(e?.message||e).slice(0,240),agents:[]}; }
 }
 
 // Executa somente comandos estruturados e permitidos. Nunca recebe código livre nem habilita ordens reais.
