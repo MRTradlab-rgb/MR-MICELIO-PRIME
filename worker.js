@@ -7,6 +7,24 @@ import { handleEvolution } from "./evolution.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
+async function requireAdminAccess(ctx, env) {
+  // Cloudflare Access must authenticate the request before private routes run.
+  if (!ctx?.access || typeof ctx.access.getIdentity !== "function") {
+    return { ok: false, status: 401 };
+  }
+  try {
+    const identity = await ctx.access.getIdentity();
+    const email = typeof identity?.email === "string" ? identity.email.trim().toLowerCase() : "";
+    const allowedEmail = typeof env.ACCESS_ADMIN_EMAIL === "string"
+      ? env.ACCESS_ADMIN_EMAIL.trim().toLowerCase()
+      : "";
+    if (!email || !allowedEmail) return { ok: false, status: 403 };
+    if (email !== allowedEmail) return { ok: false, status: 403 };
+    return { ok: true, email };
+  } catch {
+    return { ok: false, status: 401 };
+  }
+}
 function corsHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
   return {"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400"};
