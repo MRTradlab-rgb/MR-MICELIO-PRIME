@@ -12,3 +12,7 @@ database_id = "5627481f-d743-49d8-b96e-6905bac65708"
 
 [triggers]
 crons = ["* * * * *"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
