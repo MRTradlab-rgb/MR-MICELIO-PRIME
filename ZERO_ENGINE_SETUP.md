@@ -33,3 +33,17 @@
 
 ## Arquitetura cooperativa
 O módulo executa os 50 agentes sem hierarquia de rainha. Prime coordena e mantém o serviço, enquanto a população de agentes conserva avaliações individuais. A futura comunicação entre micélios deve consumir somente resultados validados e identificados, sem depender de uma única instância para continuar o trabalho.
+
+
+## Centro de Logs e Aprendizado
+
+A branch também inclui uma tela estática em `public/logs.html`, servida pelo Worker em `/logs` por meio do binding de Assets no `wrangler.toml`.
+
+- `GET /engine/logs?limit=50&offset=0`: retorna execuções persistidas no D1, com candles/indicadores resumidos, 50 sinais individuais do Micélio por ativo, decisão da Gemma, motivo, previsões criadas e avaliações do ciclo.
+- A tela `/logs` consulta `/engine/status`, `/engine/agents` e `/engine/logs`.
+- Filtros: oponente, ativo, direção, agente e estratégia.
+- Exportação local: JSON completo e CSV das decisões filtradas.
+- Os registros são mantidos no D1 em `engine_runs.details`; o download cria uma cópia no aparelho. O histórico não deve ser confundido com aprendizagem permanente do modelo.
+- Não é necessário criar nova tabela ou migration: a tela reutiliza a tabela `engine_runs` já criada pela migration 0002.
+
+Depois de publicar a branch com o novo binding de Assets e o Worker atualizado, abra `/logs`. Se o banco ainda não tiver a migration 0002 aplicada, a tela informará falha de consulta; aplique a migration antes de usar.
