@@ -64,7 +64,15 @@ export async function handleRace(request,env,url,json) {
       sql+=" ORDER BY created_at DESC LIMIT ?";
       params.push(limit);
       const rows=await env.DB.prepare(sql).bind(...params).all();
-      return json({ok:true,trades:rows.results||[],count:(rows.results||[]).length},200,request);
+      let dsql="SELECT * FROM race_decisions WHERE 1=1",dparams=[];
+      if(competitor){dsql+=" AND competitor=?";dparams.push(competitor);}
+      if(symbol){dsql+=" AND symbol=?";dparams.push(symbol);}
+      if(from){dsql+=" AND created_at>=?";dparams.push(from);}
+      if(to){dsql+=" AND created_at<=?";dparams.push(to);}
+      dsql+=" ORDER BY created_at DESC LIMIT ?";
+      dparams.push(limit);
+      const decisions=await env.DB.prepare(dsql).bind(...dparams).all();
+      return json({ok:true,trades:rows.results||[],decisions:decisions.results||[],count:(rows.results||[]).length,decisionCount:(decisions.results||[]).length},200,request);
     }
     if(request.method==="GET"&&url.pathname==="/race/export") {
       const format=url.searchParams.get("format")||"json";
