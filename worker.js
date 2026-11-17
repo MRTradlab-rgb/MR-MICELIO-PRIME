@@ -54,7 +54,7 @@ export default {
   if(url.pathname.startsWith("/evolution")) return handleEvolution(request,env,url,corsHeaders,json);
   if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat","GET /engine/status","GET /engine/agents","POST /engine/seed","POST /engine/tick"],health:"/health"},200,request);
   if(request.method==="GET"&&url.pathname==="/health") return json({ok:true,service:"MR Micelio Prime",model:MODEL,aiBinding:Boolean(env.AI),status:env.AI?"READY":"MISSING_AI_BINDING"},env.AI?200:503,request);
-  if(request.method!=="POST"||url.pathname!=="/chat") return json({ok:false,error:"Use GET /health or POST /chat"},404,request);
+  if(request.method!=="POST"||url.pathname!=="/chat") { if(request.method==="GET"&&env.ASSETS) return env.ASSETS.fetch(request); return json({ok:false,error:"Use GET /health, POST /chat or GET /logs"},404,request); }
   if(!env.AI) return json({ok:false,error:"Workers AI binding 'AI' is not configured."},503,request);
   let body; try {body=await request.json();} catch {return json({ok:false,error:"Invalid JSON body."},400,request);}
   const sourceMessages=Array.isArray(body.messages)?body.messages:(Array.isArray(body.conversation)?body.conversation:[]);
