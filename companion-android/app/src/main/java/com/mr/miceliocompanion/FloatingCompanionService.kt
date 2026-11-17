@@ -36,22 +36,40 @@ class FloatingCompanionService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private val handler = Handler(Looper.getMainLooper())
     private var expanded = false
-    private var movingRight = true
-    private var speechRecognizer: SpeechRecognizer? = null
+    private var targetX = 18
+    private var targetY = 240
+    private var lastTargetAt = 0L
+    private var userDragging = false
 
+    // Movimento autônomo local: não depende de chamadas à IA a cada quadro.
+    // Quando a visão contextual fornecer coordenadas, elas poderão substituir estes alvos.
     private val drift = object : Runnable {
         override fun run() {
-            if (!expanded && ::bubbleParams.isInitialized) {
+            if (!expanded && !userDragging && ::bubbleParams.isInitialized) {
                 val display = resources.displayMetrics
-                val maxX = (display.widthPixels - bubble.width).coerceAtLeast(0)
-                bubbleParams.x += if (movingRight) 7 else -7
-                if (bubbleParams.x >= maxX || bubbleParams.x <= 0) movingRight = !movingRight
+                val maxX = (display.widthPixels - 76).coerceAtLeast(0)
+                val maxY = (display.heightPixels - 150).coerceAtLeast(80)
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastTargetAt > 4200L) {
+                    val safeTop = (display.heightPixels * 0.12f).toInt()
+                    val safeBottom = (display.heightPixels * 0.78f).toInt()
+                    targetX = (24..maxX.coerceAtLeast(24)).random()
+                    targetY = (safeTop..safeBottom.coerceAtLeast(safeTop + 1)).random()
+                    lastTargetAt = now
+                }
+                val dx = targetX - bubbleParams.x
+                val dy = targetY - bubbleParams.y
+                bubbleParams.x += (dx * 0.055f).toInt().let { if (it == 0 && dx != 0) dx.sign() else it }
+                bubbleParams.y += (dy * 0.055f).toInt().let { if (it == 0 && dy != 0) dy.sign() else it }
                 bubbleParams.x = bubbleParams.x.coerceIn(0, maxX)
+                bubbleParams.y = bubbleParams.y.coerceIn(0, maxY)
                 try { wm.updateViewLayout(bubble, bubbleParams) } catch (_: Exception) {}
             }
-            handler.postDelayed(this, 90)
+            handler.postDelayed(this, 45)
         }
     }
+
+    private fun Int.sign(): Int = if (this > 0) 1 else -1
 
     override fun onCreate() {
         super.onCreate()
@@ -94,7 +112,7 @@ class FloatingCompanionService : Service(), TextToSpeech.OnInitListener {
                 private var sx = 0f; private var sy = 0f; private var ox = 0; private var oy = 0
                 override fun onTouch(v: android.view.View, event: MotionEvent): Boolean {
                     when (event.action) {
-                        MotionEvent.ACTION_DOWN -> { sx = event.rawX; sy = event.rawY; ox = bubbleParams.x; oy = bubbleParams.y; return true }
+                        MotionEvent.ACTION_DOWN -> { sx = event.rawX; sy = event.rawY; ox = bubbleParams.x; oy = bubbleParams.y; userDragging = true; return true }
                         MotionEvent.ACTION_MOVE -> {
                             bubbleParams.x = ox + (event.rawX - sx).toInt()
                             bubbleParams.y = oy + (event.rawY - sy).toInt()
@@ -104,6 +122,9 @@ class FloatingCompanionService : Service(), TextToSpeech.OnInitListener {
                         MotionEvent.ACTION_UP -> {
                             val moved = kotlin.math.abs(event.rawX - sx) + kotlin.math.abs(event.rawY - sy) > 18
                             if (!moved) performClick()
+                            userDragging = false
+                            targetX = bubbleParams.x; targetY = bubbleParams.y
+                            lastTargetAt = android.os.SystemClock.uptimeMillis()
                             return true
                         }
                     }
