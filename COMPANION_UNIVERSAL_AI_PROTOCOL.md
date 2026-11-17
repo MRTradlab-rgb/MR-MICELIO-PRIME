@@ -176,3 +176,72 @@ The motion engine remains local and smooth. Android overlay permission is requir
 ## Implementation status
 
 This document defines the provider-neutral contract only. It does not mean that the gateway, provider registration, MCP adapter, WebSocket, or Android bridge has been implemented or deployed yet. The next code step is to implement the local Android target API and a gateway that validates this schema, then connect one existing vision provider end-to-end before adding more providers.
+
+
+## Multi-mushroom presence and user-controlled interaction
+
+The interface may display multiple small mushroom companions, one per connected AI/agent that has a legitimate reason to offer help. Each mushroom is a presence indicator for its provider, not an always-running independent animation or an unrestricted chat session.
+
+### Interaction invitation lifecycle
+
+1. A connected provider may submit a lightweight `interaction.offer` containing its identity, a short reason, urgency class, and expiry. It must not start speaking, capture extra screen data, or move onto the user's controls merely by submitting an offer.
+2. The interface groups offers and deduplicates repeated requests from the same provider/topic. It may show a subtle mushroom/presence marker or a single compact invitation.
+3. The user controls interaction with one clear master button: **Autorizar interação** / **Pausar interação**. The default on a fresh install/session is OFF.
+4. When OFF, providers cannot initiate conversation, animate toward the user, or receive additional screen context. They may remain connected only for explicitly permitted low-cost status/health signals. The UI must show that interaction is paused.
+5. When ON, only providers granted access by the user may offer or conduct interactions, within their scoped permissions. The user may pause everything immediately, or disable/revoke one provider independently.
+6. An invitation is not consent. No audio, speech, overlay movement, or screen inspection begins until the relevant permission and interaction state allow it.
+
+### Non-intrusive presentation
+
+- Show only a small number of mushroom indicators at once; group the rest under a count/badge or an expandable roster.
+- Never cover text fields, navigation, accessibility controls, system buttons, or the target being explained. Prefer screen edges and safe areas.
+- Do not steal focus, open panels automatically, vibrate, or speak unsolicited by default.
+- Use a quiet visual cue for ordinary offers. Reserve stronger attention cues for user-enabled high-priority alerts.
+- Respect Do Not Disturb, app foreground/background state, user activity, and manual dragging.
+- Apply per-provider cooldowns, deduplication, backoff, and a global interaction rate limit. If the user dismisses an offer, suppress similar offers for a configurable period.
+- If CPU, memory, battery, network, or frame-time budgets are exceeded, reduce animation, pause background polling, and collapse idle mushrooms to static indicators. Never run one model inference or network request per animation frame.
+- A mushroom is rendered only while its provider has a valid connection/session and an allowed presence state; disconnected agents are not shown as active.
+
+### Interaction statistics (privacy-minimal)
+
+An optional statistics view may show aggregate counts such as:
+- connected providers and currently authorized providers;
+- offers received, accepted, dismissed, and expired;
+- interactions started and completed;
+- average response delay and user pause/revoke counts;
+- resource budget state (battery/CPU/network) in coarse categories.
+
+Statistics are OFF unless the user enables them. Prefer on-device aggregation, short retention, and no content collection. Do not record screenshots, audio, message bodies, typed text, precise browsing history, or sensitive inferences. Provide a clear reset/delete control. Never share statistics with providers or third parties unless the user explicitly exports them.
+
+### Additional event examples
+
+An offer is a request, not a command:
+
+```json
+{
+  "protocol": "uacp/0.1",
+  "type": "interaction.offer",
+  "message_id": "offer_01",
+  "session_id": "session_01",
+  "sent_at": "2026-11-17T19:00:00Z",
+  "provider_id": "agent_helper",
+  "display_name": "Assistente de navegação",
+  "reason": "Posso explicar este aviso que apareceu.",
+  "priority": "normal",
+  "expires_at": "2026-11-17T19:00:30Z"
+}
+```
+
+The client may respond with `interaction.accept`, `interaction.dismiss`, or `interaction.expire`. Accept is valid only while the master interaction switch is ON and the provider is authorized. Dismissal triggers cooldown/deduplication.
+
+### Acceptance tests for multi-mushroom mode
+
+- Fresh install/session starts with interaction OFF.
+- Multiple providers can appear as quiet, grouped invitations without taking control.
+- A single master switch pauses all interactive behavior immediately.
+- Turning interaction ON does not authorize a provider that the user has not approved.
+- Dismissing one offer does not cause repeated popups from that provider/topic during its cooldown.
+- Excess providers are grouped; the interface never floods the screen with mushrooms.
+- Idle agents do not continuously poll, animate at high frame rates, or invoke models.
+- Statistics remain disabled until explicitly enabled and contain no conversation or screen content.
+- User pause, provider revoke, or session end stops motion/speech and clears pending offers.
