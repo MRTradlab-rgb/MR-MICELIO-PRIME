@@ -3,7 +3,7 @@
  * 50 cooperative agents, public Binance market data, D1 persistence.
  * No exchange keys, no order endpoint, no real-money execution.
  */
-const SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+const SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","LINKUSDT","ADAUSDT","DOGEUSDT","XRPUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT"];
 const STRATEGIES = ["MOMENTUM","MEAN_REVERSION","BREAKOUT","VOLATILITY","TREND","CONTRARIAN"];
 const FEE_PER_SIDE = 0.001;
 const SLIPPAGE_PER_SIDE = 0.0005;
