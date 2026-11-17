@@ -130,6 +130,8 @@ async function createForecasts(db,symbol,candles) {
 async function createGemmaForecast(env,symbol,candles,analysis) {
   if(!env.AI) return {created:false,reason:"AI_BINDING_MISSING"};
   const candle=candles.at(-1), f=analysis.features;
+  // Horizon-aligned cadence: one decision per symbol every three minutes, avoiding needless inference every cron tick.
+  if(Math.floor(candle.openTime/60000)%HORIZON_MINUTES!==0) return {created:false,reason:"WAITING_FOR_GEMMA_CYCLE"};
   const signals=analysis.agentSignals||[];
   const buys=signals.filter(x=>x.direction==="BUY").length;
   const sells=signals.filter(x=>x.direction==="SELL").length;
