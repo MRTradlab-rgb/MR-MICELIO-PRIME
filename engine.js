@@ -14,6 +14,7 @@ const mean = a => a.length ? a.reduce((s,x)=>s+x,0)/a.length : 0;
 const std = a => { const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2))); };
 const auth = (request,env) => Boolean(env.ENGINE_ADMIN_TOKEN) && request.headers.get("Authorization") === `Bearer ${env.ENGINE_ADMIN_TOKEN}`;
 
+const GEMMA_AGENT = {id:"gemma-prime",archetype:"EXPLORADOR",strategy:"GEMMA_ENSEMBLE",threshold:0.55,horizon:HORIZON_MINUTES};
 const AGENTS = Array.from({length:50},(_,i)=>({
   id:`agent-${String(i+1).padStart(2,"0")}`,
   archetype:i<25?"CONSERVADOR":"EXPLORADOR",
@@ -24,7 +25,7 @@ const AGENTS = Array.from({length:50},(_,i)=>({
 
 async function ensureAgents(db) {
   const stamp=nowIso();
-  await db.batch(AGENTS.map(a=>db.prepare(
+  await db.batch([...AGENTS,GEMMA_AGENT].map(a=>db.prepare(
     "INSERT OR IGNORE INTO engine_agents (agent_id,archetype,strategy,threshold,total_forecasts,closed_forecasts,wins,losses,net_return_sum,updated_at) VALUES (?,?,?,?,0,0,0,0,0,?)"
   ).bind(a.id,a.archetype,a.strategy,a.threshold,stamp)));
 }
@@ -102,9 +103,11 @@ async function createForecasts(db,symbol,candles) {
   const f=features(candles), candle=candles.at(-1), target=candle.openTime+HORIZON_MINUTES*60000;
   const batch=[];
   const forecastAgents=[];
+  const agentSignals=[];
   let created=0;
   for(const a of AGENTS) {
     const d=decide(a,f);
+    agentSignals.push({agentId:a.id,strategy:a.strategy,direction:d.direction,score:d.score,confidence:d.confidence});
     if(d.direction==="HOLD"||d.confidence<0.18) continue;
     const forecastKey=`${symbol}:${a.id}:${candle.openTime}`;
     forecastAgents.push(a.id);
@@ -121,7 +124,41 @@ async function createForecasts(db,symbol,candles) {
       }
     }
   }
-  return {created,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
+  return {created,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio,mean20:f.mean20,zscore:f.zscore,breakout:f.breakout,high:f.high,low:f.low},agentSignals};
+}
+
+async function createGemmaForecast(env,symbol,candles,analysis) {
+  if(!env.AI) return {created:false,reason:"AI_BINDING_MISSING"};
+  const candle=candles.at(-1), f=analysis.features;
+  const signals=analysis.agentSignals||[];
+  const buys=signals.filter(x=>x.direction==="BUY").length;
+  const sells=signals.filter(x=>x.direction==="SELL").length;
+  const holds=signals.length-buys-sells;
+  const strongest=signals.filter(x=>x.direction!=="HOLD").sort((a,b)=>b.confidence-a.confidence).slice(0,12);
+  const input={symbol,price:f.price,indicators:{r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,mean20:f.mean20,zscore:f.zscore,breakout:f.breakout,volumeRatio:f.volumeRatio},micelioConsensus:{buy:buys,sell:sells,hold:holds,total:signals.length},strongestAgentSignals:strongest};
+  const prompt=`Você é Gemma Prime, agente autônomo de PAPER TRADING do MR TradLab ZERO. Tome uma decisão individual usando EXCLUSIVAMENTE os dados técnicos e sinais dos agentes do Micélio fornecidos no JSON. Não invente preços, indicadores, notícias ou dados externos. BUY significa abrir posição comprada simulada; SELL significa abrir posição vendida simulada; HOLD significa não abrir operação. Considere taxas e slippage já configurados no motor. Evite operar se o consenso for fraco ou contraditório. Retorne somente JSON válido: {"decision":"BUY|SELL|HOLD","confidence":0.0,"strategy":"MOMENTUM|MEAN_REVERSION|BREAKOUT|VOLATILITY|TREND|CONTRARIAN|ENSEMBLE","reason":"justificativa curta baseada nos dados"}. JSON de análise: ${JSON.stringify(input)}`;
+  try {
+    const result=await env.AI.run("@cf/google/gemma-4-26b-a4b-it",{messages:[{role:"user",content:prompt}],max_tokens:220,temperature:0.1});
+    let raw=typeof result==="string"?result:(result?.response||result?.output_text||result?.text||result?.choices?.[0]?.message?.content||"");
+    raw=String(raw).replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"").trim();
+    const parsed=JSON.parse(raw);
+    const direction=String(parsed.decision||"").toUpperCase();
+    const confidence=Number(parsed.confidence);
+    if(!["BUY","SELL","HOLD"].includes(direction)||!Number.isFinite(confidence)||confidence<0||confidence>1) return {created:false,reason:"INVALID_MODEL_DECISION"};
+    if(direction==="HOLD"||confidence<0.55) return {created:false,reason:"GEMMA_HOLD_OR_LOW_CONFIDENCE",decision:direction,confidence};
+    const strategy=STRATEGIES.includes(String(parsed.strategy||"").toUpperCase())?String(parsed.strategy).toUpperCase():"TREND";
+    const key=`${symbol}:gemma-prime:${candle.openTime}`;
+    const regime=f.volatility>0.002?"HIGH_VOL":f.trend>0.001?"UPTREND":f.trend< -0.001?"DOWNTREND":"RANGE";
+    const inserted=await env.DB.prepare("INSERT OR IGNORE INTO engine_forecasts(forecast_key,agent_id,symbol,candle_open_time,target_open_time,direction,entry_price,strategy,score,confidence,regime,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'PENDING',?)")
+      .bind(key,GEMMA_AGENT.id,symbol,candle.openTime,candle.openTime+HORIZON_MINUTES*60000,direction,f.price,strategy,(direction==="BUY"?1:-1)*confidence,confidence,regime,nowIso()).run();
+    if(Number(inserted.meta?.changes||0)===1) {
+      await env.DB.prepare("UPDATE engine_agents SET total_forecasts=total_forecasts+1,updated_at=? WHERE agent_id=?").bind(nowIso(),GEMMA_AGENT.id).run();
+      return {created:true,decision:direction,confidence,reason:String(parsed.reason||"").slice(0,240)};
+    }
+    return {created:false,reason:"DUPLICATE_CANDLE_DECISION"};
+  } catch(err) {
+    return {created:false,reason:"GEMMA_INFERENCE_OR_PARSE_FAILED",detail:String(err?.message||err).slice(0,180)};
+  }
 }
 
 export async function runAutonomousTick(env) {
@@ -133,7 +170,8 @@ export async function runAutonomousTick(env) {
     await saveCandle(env.DB,symbol,candles.at(-1));
     const evaluated=await evaluateDue(env.DB,symbol,candles);
     const forecast=await createForecasts(env.DB,symbol,candles);
-    return {symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,features:forecast.features};
+    const gemma=await createGemmaForecast(env,symbol,candles,forecast);
+    return {symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,gemma,features:forecast.features};
   }));
   outcomes.forEach((item,i)=>{
     if(item.status==="fulfilled") results.push(item.value);
