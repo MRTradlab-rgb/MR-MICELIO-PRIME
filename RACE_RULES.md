@@ -31,7 +31,7 @@ Nenhum prêmio em dinheiro, criptoativo, participação societária ou direito f
 10. Atingir a meta exige patrimônio líquido confirmado de pelo menos US$ 1.000,00, não apenas lucro não realizado isolado ou pico momentâneo sem validação.
 
 ## Saldo negativo e risco
-Saldo negativo não pode surgir de forma implícita nem permitir alavancagem ilimitada. Antes da largada, implementar e documentar um limite explícito de crédito virtual, custo desse crédito (se houver), limite de exposição e regra de bloqueio. Se o limite for atingido, a carteira entra em estado de risco/bloqueio, sem apagar perdas nem reiniciar o saldo. A regra deve ser idêntica para as duas carteiras.
+Saldo negativo não pode surgir de forma implícita nem permitir alavancagem ilimitada. Não existe crédito virtual nem venda descoberta. O caixa nunca pode ficar negativo. Taxa estimada: 0,10% por lado; slippage estimado: 0,05% por lado. O valor máximo de uma nova operação é 25% do patrimônio; a exposição total máxima é 50% do patrimônio. A exposição por posição não pode exceder 50% do patrimônio. Se o limite de caixa, exposição ou validade de dados for atingido, bloquear novas entradas sem apagar perdas ou reiniciar saldos. A regra é idêntica para as duas carteiras.
 
 ## Critérios de largada — todos obrigatórios
 - [ ] Duas carteiras persistentes e independentes com US$ 10,00 cada.
