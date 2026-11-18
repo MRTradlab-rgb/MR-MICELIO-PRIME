@@ -100,6 +100,10 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
  },
  async scheduled(controller,env,ctx) {
-  ctx.waitUntil((async()=>{\n   const engine=await runAutonomousTick(env).catch(err=>({ok:false,error:String(err&&err.message||err)}));\n   const race=await runRaceCycle(env).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));\n   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));\n  })());
+  ctx.waitUntil((async()=>{
+   const engine=await runAutonomousTick(env).catch(err=>({ok:false,error:String(err&&err.message||err)}));
+   const race=await runRaceCycle(env).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
+   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
+  })());
  }
 };
