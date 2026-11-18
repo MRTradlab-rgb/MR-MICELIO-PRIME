@@ -53,7 +53,12 @@ export default {
   if(url.pathname.startsWith("/engine")) return handleEngine(request,env,url,json);
   if(url.pathname.startsWith("/evolution")) return handleEvolution(request,env,url,corsHeaders,json);
   if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat","GET /engine/status","GET /engine/agents","POST /engine/seed","POST /engine/tick"],health:"/health"},200,request);
-  if(request.method==="GET"&&url.pathname==="/health") return json({ok:true,service:"MR Micelio Prime",model:MODEL,aiBinding:Boolean(env.AI),status:env.AI?"READY":"MISSING_AI_BINDING"},env.AI?200:503,request);
+  if(request.method==="GET"&&url.pathname==="/health") {
+    const prime=await getPrimeContext(env.DB);
+    const checks={aiBinding:Boolean(env.AI),d1Binding:Boolean(env.DB),engineSchema:Boolean(prime.engineReady),mode:prime.mode||"UNAVAILABLE",agents:Number(prime.agents?.total||0)};
+    const ready=checks.aiBinding&&checks.d1Binding&&checks.engineSchema&&checks.agents===50;
+    return json({ok:ready,service:"MR Micelio Prime",model:MODEL,status:ready?"READY":"DEGRADED",checks,cron:{configuredInWrangler:true,expectedSchedule:"* * * * *",runtimeConfirmed:false},lastRuns:prime.recentRuns||[],note:"A configuração do Cron no código não comprova que o trigger está ativo na implantação."},ready?200:503,request);
+  }
   if(request.method!=="POST"||url.pathname!=="/chat") return json({ok:false,error:"Use GET /health or POST /chat"},404,request);
   if(!env.AI) return json({ok:false,error:"Workers AI binding 'AI' is not configured."},503,request);
   let body; try {body=await request.json();} catch {return json({ok:false,error:"Invalid JSON body."},400,request);}
