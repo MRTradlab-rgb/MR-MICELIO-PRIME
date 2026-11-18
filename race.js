@@ -37,18 +37,18 @@ async function fetchLiveQuotes(env){
   if(!response.ok||!payload?.ok) throw Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
   return payload;
 }
-export async function runRaceCycle(env){
+export async function runRaceCycle(env,suppliedFeed=null){
   if(!env?.DB) throw Error("D1_BINDING_MISSING");
   await seed(env.DB);
   const quotes={},errors=[];
   let feed;
-  try{feed=await fetchLiveQuotes(env);}catch(e){return {ok:false,mode:"PAPER_ONLY",error:String(e?.message||e),quoteCount:0,errors};}
+  try{feed=suppliedFeed||await fetchLiveQuotes(env);}catch(e){return {ok:false,mode:"PAPER_ONLY",error:String(e?.message||e),quoteCount:0,errors};}
   for(const [symbol,q] of Object.entries(feed.quotes||{})) if(ALLOWED.has(symbol)) quotes[symbol]=q;
   for(const symbol of feed.staleSymbols||[]) errors.push({symbol,error:"NO_FRESH_WEBSOCKET_TICK"});
   const valid=Object.values(quotes).filter(q=>Number.isFinite(q.price)&&q.price>0&&Date.now()-q.timestamp<=QUOTE_MAX_AGE_MS);
   if(!valid.length) return {ok:false,mode:"PAPER_ONLY",error:"NO_FRESH_QUOTES",quoteCount:0,errors};
   const last=await env.DB.prepare("SELECT created_at FROM race_cycles ORDER BY id DESC LIMIT 1").first();
-  if(last&&Date.now()-Date.parse(last.created_at)<20000) return {ok:true,skipped:true,reason:"CYCLE_THROTTLED",quoteCount:valid.length,errors};
+  if(last&&Date.now()-Date.parse(last.created_at)<10000) return {ok:true,skipped:true,reason:"CYCLE_THROTTLED",quoteCount:valid.length,errors};
   const t=now();
   await env.DB.prepare("INSERT INTO race_cycles(created_at,quote_count,quotes_json,status) VALUES(?,?,?,?)").bind(t,valid.length,JSON.stringify(quotes),"PROCESSING").run();
   const pos=await env.DB.prepare("SELECT symbol,quantity,entry_price FROM race_positions WHERE wallet_id='GEMMA'").all();
@@ -68,4 +68,18 @@ export async function runRaceCycle(env){
   return {ok:true,mode:"PAPER_ONLY",source:"BINANCE_WEBSOCKET",feedConnected:feed.connected,feedLastMessageAt:feed.lastMessageAt,quoteCount:valid.length,quoteErrors:errors,gemmaError:ge,decisions:{gemma:gd,micelio:md},gemmaError:ge,micelioError:me,executions:exec,wallets:await state(env.DB)};
 }
 
-export async function handleRace(request,env,url,json){if(!env.ENGINE_ADMIN_TOKEN||request.headers.get("Authorization")!==`Bearer ${env.ENGINE_ADMIN_TOKEN}`)return json({ok:false,error:"UNAUTHORIZED"},401,request);if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);await seed(env.DB);if(request.method==="GET"&&url.pathname==="/race/status")return json({ok:true,...await state(env.DB)},200,request);if(request.method==="POST"&&url.pathname==="/race/snapshot"){let b;try{b=await request.json();}catch{return json({ok:false,error:"INVALID_JSON"},400,request);}const q={};for(const [s,v] of Object.entries(b?.quotes||{})){const p=Number(v?.price),ts=Number(v?.timestamp);if(ALLOWED.has(s)&&p>0&&Number.isFinite(p)&&Number.isFinite(ts)&&Math.abs(Date.now()-ts)<=15000)q[s]={price:p,timestamp:ts};}if(!Object.keys(q).length)return json({ok:false,error:"NO_FRESH_QUOTES",maxAgeMs:15000},422,request);const last=await env.DB.prepare("SELECT created_at FROM race_cycles ORDER BY id DESC LIMIT 1").first();if(last&&Date.now()-Date.parse(last.created_at)<20000)return json({ok:true,skipped:true,reason:"CYCLE_THROTTLED",...await state(env.DB)},200,request);const t=now();await env.DB.prepare("INSERT INTO race_cycles(created_at,quote_count,quotes_json,status) VALUES(?,?,?,?)").bind(t,Object.keys(q).length,JSON.stringify(q),"PROCESSING").run();const pos=await env.DB.prepare("SELECT symbol,quantity,entry_price FROM race_positions WHERE wallet_id='GEMMA'").all();let gd=[],ge=null;try{gd=await gemma(env,q,pos.results||[]);}catch(e){ge=String(e.message||e).slice(0,180);}const md=await micelio(env.DB,q),exec=[];for(const [wallet,list] of [["GEMMA",gd],["MICELIO",md]])for(const d of list)if(Number(d.confidence||0)>=.35&&q[d.symbol])exec.push({wallet,...d,execution:await trade(env.DB,wallet,d.symbol,d.action,q[d.symbol].price,d.reason)});await env.DB.prepare("UPDATE race_cycles SET status=? WHERE id=(SELECT MAX(id) FROM race_cycles)").bind(ge?"PARTIAL":"COMPLETED").run();return json({ok:true,mode:"PAPER_ONLY",quoteCount:Object.keys(q).length,gemmaError:ge,decisions:{gemma:gd,micelio:md},executions:exec,wallets:await state(env.DB)},200,request);}return json({ok:false,error:"NOT_FOUND",endpoints:["GET /race/status","POST /race/snapshot"]},404,request);}
+export async function handleRace(request,env,url,json){
+ if(request.method==="GET"&&url.pathname==="/race/public-status"){
+  if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);
+  try{
+   const [wallets,positions,trades,cycles]=await Promise.all([
+    env.DB.prepare("SELECT wallet_id,initial_balance,cash_balance,created_at,updated_at FROM race_wallets ORDER BY wallet_id").all(),
+    env.DB.prepare("SELECT wallet_id,symbol,quantity,entry_price,opened_at FROM race_positions ORDER BY wallet_id,symbol").all(),
+    env.DB.prepare("SELECT id,wallet_id,symbol,side,quantity,price,fee,slippage,net_pnl,reason,created_at FROM race_trades ORDER BY id DESC LIMIT 30").all(),
+    env.DB.prepare("SELECT id,created_at,quote_count,status FROM race_cycles ORDER BY id DESC LIMIT 10").all()
+   ]);
+   return json({ok:true,mode:"PAPER_ONLY",realOrdersEnabled:false,wallets:wallets.results||[],positions:positions.results||[],recentTrades:trades.results||[],recentCycles:cycles.results||[]},200,request);
+  }catch(e){return json({ok:false,error:"RACE_STATUS_UNAVAILABLE",detail:String(e?.message||e).slice(0,160)},503,request);}
+ }
+ if(!env.ENGINE_ADMIN_TOKEN||request.headers.get("Authorization")!==`Bearer ${env.ENGINE_ADMIN_TOKEN}`)return json({ok:false,error:"UNAUTHORIZED"},401,request);
+ if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);await seed(env.DB);if(request.method==="GET"&&url.pathname==="/race/status")return json({ok:true,...await state(env.DB)},200,request);if(request.method==="POST"&&url.pathname==="/race/snapshot"){let b;try{b=await request.json();}catch{return json({ok:false,error:"INVALID_JSON"},400,request);}const q={};for(const [s,v] of Object.entries(b?.quotes||{})){const p=Number(v?.price),ts=Number(v?.timestamp);if(ALLOWED.has(s)&&p>0&&Number.isFinite(p)&&Number.isFinite(ts)&&Math.abs(Date.now()-ts)<=15000)q[s]={price:p,timestamp:ts};}if(!Object.keys(q).length)return json({ok:false,error:"NO_FRESH_QUOTES",maxAgeMs:15000},422,request);const last=await env.DB.prepare("SELECT created_at FROM race_cycles ORDER BY id DESC LIMIT 1").first();if(last&&Date.now()-Date.parse(last.created_at)<20000)return json({ok:true,skipped:true,reason:"CYCLE_THROTTLED",...await state(env.DB)},200,request);const t=now();await env.DB.prepare("INSERT INTO race_cycles(created_at,quote_count,quotes_json,status) VALUES(?,?,?,?)").bind(t,Object.keys(q).length,JSON.stringify(q),"PROCESSING").run();const pos=await env.DB.prepare("SELECT symbol,quantity,entry_price FROM race_positions WHERE wallet_id='GEMMA'").all();let gd=[],ge=null;try{gd=await gemma(env,q,pos.results||[]);}catch(e){ge=String(e.message||e).slice(0,180);}const md=await micelio(env.DB,q),exec=[];for(const [wallet,list] of [["GEMMA",gd],["MICELIO",md]])for(const d of list)if(Number(d.confidence||0)>=.35&&q[d.symbol])exec.push({wallet,...d,execution:await trade(env.DB,wallet,d.symbol,d.action,q[d.symbol].price,d.reason)});await env.DB.prepare("UPDATE race_cycles SET status=? WHERE id=(SELECT MAX(id) FROM race_cycles)").bind(ge?"PARTIAL":"COMPLETED").run();return json({ok:true,mode:"PAPER_ONLY",quoteCount:Object.keys(q).length,gemmaError:ge,decisions:{gemma:gd,micelio:md},executions:exec,wallets:await state(env.DB)},200,request);}return json({ok:false,error:"NOT_FOUND",endpoints:["GET /race/status","POST /race/snapshot"]},404,request);}
