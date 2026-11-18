@@ -225,11 +225,17 @@ export async function handleEngine(request,env,url,json) {
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts").first(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_runs").first(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts WHERE status='PENDING'").first(),
-      env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 1").first(),
+      env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated,details FROM engine_runs ORDER BY id DESC LIMIT 1").first(),
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_agents WHERE status='PAUSED'").first()
     ]);
+    let lastRun=last||null;
+    if(lastRun) {
+      let diagnostic={};
+      try { diagnostic=JSON.parse(lastRun.details||"{}"); } catch {}
+      lastRun={run_at:lastRun.run_at,duration_ms:lastRun.duration_ms,symbols_ok:lastRun.symbols_ok,symbols_failed:lastRun.symbols_failed,forecasts_created:lastRun.forecasts_created,forecasts_evaluated:lastRun.forecasts_evaluated,errors:(diagnostic.errors||[]).slice(0,11).map(x=>({symbol:x.symbol,error:String(x.error||"UNKNOWN").slice(0,180)})),results:(diagnostic.results||[]).map(x=>({symbol:x.symbol,price:x.price,forecastsCreated:x.forecastsCreated,evaluated:x.evaluated}))};
+    }
     const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
-    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),activeAgents:Number(agents?.total||0)-Number(paused?.total||0),pausedAgents:Number(paused?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),activeAgents:Number(agents?.total||0)-Number(paused?.total||0),pausedAgents:Number(paused?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
   }
   if(request.method==="GET"&&url.pathname==="/engine/agents") {
     await ensureAgents(env.DB);
