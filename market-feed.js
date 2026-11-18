@@ -67,6 +67,8 @@ export class BinanceMarketFeed {
           if(!SYMBOLS.includes(symbol))return;
           if(d.k){
             const k=d.k;
+            const livePrice=Number(k.c);
+            if(livePrice>0)this.quotes[symbol]={price:livePrice,bid:livePrice,ask:livePrice,timestamp:now(),exchangeEventTime:Number(k.T)||null,source:"BINANCE_WEBSOCKET_KLINE"};
             if(k.x){
               const row={openTime:Number(k.t),open:Number(k.o),high:Number(k.h),low:Number(k.l),close:Number(k.c),volume:Number(k.v),closeTime:Number(k.T)};
               if(Object.values(row).every(Number.isFinite)&&row.open>0&&row.close>0&&row.high>0&&row.low>0&&row.closeTime>0){
