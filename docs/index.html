@@ -18,7 +18,7 @@ main{max-width:1180px;margin:auto;padding:22px 16px 50px}.top{display:flex;justi
 <div class="card"><div class="k">Feed de mercado</div><div class="v" id="feed">—</div><div class="small" id="feedTime">Sem confirmação</div></div>
 <div class="card"><div class="k">Corrida</div><div class="v" id="race">Pendente</div><div class="small">API pública segura necessária</div></div>
 </div>
-<h2 class="section">Micélio Prime × Gemma</h2>
+<h2 class="section">Cotações ao vivo · 11 mercados</h2><div class="card"><div class="row"><strong>BINANCE WEBSOCKET</strong><span class="status"><i class="dot" id="marketDot"></i><span id="marketStatus">Conectando ao feed</span></span></div><div class="small" id="marketUpdated">Aguardando primeira cotação…</div><div id="quotes" class="log" style="max-height:360px;margin-top:10px">Carregando cotações reais…</div></div>\n<h2 class="section">Micélio Prime × Gemma</h2>
 <div class="twocol">
 <div class="card"><div class="row"><strong>MICÉLIO PRIME</strong><span class="status"><i class="dot" id="micDot"></i><span id="micStatus">Aguardando API</span></span></div><p class="small">50 agentes cooperativos. Leituras e decisões serão exibidas somente quando fornecidas pelo backend.</p><div class="notice" id="agentDetail">Aguardando dados reais dos agentes.</div></div>
 <div class="card"><div class="row"><strong>GEMMA</strong><span class="status"><i class="dot" id="gemDot"></i><span id="gemStatus">Aguardando API</span></span></div><p class="small">Análise independente usando o mesmo feed de mercado.</p><div class="notice">Decisões, carteira virtual e operações ainda não estão disponíveis por uma rota pública de leitura.</div></div>
@@ -32,19 +32,37 @@ main{max-width:1180px;margin:auto;padding:22px 16px 50px}.top{display:flex;justi
 const BASE='https://mr-micelio.felipe-revolt.workers.dev';
 const $=id=>document.getElementById(id);
 const stamp=()=>new Date().toLocaleString('pt-BR');
+const fmt=n=>Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:8});
 function log(s){$('log').textContent='['+stamp()+'] '+s+'\\n'+$('log').textContent}
 function findCount(x){if(Array.isArray(x))return x.length;for(const k of ['agents','items','data','results'])if(x&&Array.isArray(x[k]))return x[k].length;return null}
 async function get(path){const r=await fetch(BASE+path,{headers:{'Accept':'application/json'},cache:'no-store'});if(!r.ok)throw Error(path+' HTTP '+r.status);return r.json()}
-async function refresh(){
- $('refresh').disabled=true;
+async function refreshMarket(){
  try{
-  const [s,a]=await Promise.allSettled([get('/engine/status'),get('/engine/agents')]);
-  if(s.status==='fulfilled'){$('engine').textContent='RESPONDENDO';$('engineTime').textContent='Status recebido · '+stamp();$('feed').textContent=s.value?.market?.status||s.value?.feed?.status||'Sem campo de feed';$('feedTime').textContent='Resposta real do Worker';log('GET /engine/status respondeu.')}
-  else{$('engine').textContent='INDISPONÍVEL';$('engineTime').textContent='Não foi possível confirmar';log('Falha /engine/status: '+s.reason.message)}
-  if(a.status==='fulfilled'){const n=findCount(a.value);$('agents').textContent=n===null?'Resposta recebida':String(n);$('agentDetail').textContent=n===null?'API respondeu, mas o formato de agentes precisa ser mapeado.':n+' registros recebidos do endpoint de agentes.';$('micStatus').textContent='API respondeu';$('micDot').className='dot ok';log('GET /engine/agents respondeu.')}
-  else{$('agents').textContent='—';$('micStatus').textContent='Sem conexão';$('micDot').className='dot bad';log('Falha /engine/agents: '+a.reason.message)}
- }catch(e){log('Erro de atualização: '+e.message)}
+  const data=await get('/market/snapshot');
+  const entries=Object.entries(data.quotes||{}).sort((a,b)=>a[0].localeCompare(b[0]));
+  $('quotes').innerHTML=entries.length?entries.map(([symbol,q])=>'<div class="row"><strong>'+symbol+'</strong><span>US$ '+fmt(q.price)+'</span><span class="small">'+new Date(q.timestamp).toLocaleTimeString('pt-BR')+'</span></div>').join(''):'Nenhuma cotação válida recebida ainda.';
+  const live=Boolean(data.connected&&entries.length);
+  $('marketDot').className='dot '+(live?'ok':'bad');
+  $('marketStatus').textContent=live?'FEED CONECTADO':'AGUARDANDO DADOS';
+  $('marketUpdated').textContent='Última atualização: '+stamp()+' · '+entries.length+' de 11 ativos com cotação fresca (até 15s).';
+  $('feed').textContent=live?'AO VIVO':'SEM DADOS';
+  $('feedTime').textContent=entries.length+' cotações válidas · atualização de 1 em 1 segundo';
+ }catch(e){
+  $('marketDot').className='dot bad';$('marketStatus').textContent='FEED INDISPONÍVEL';
+  $('marketUpdated').textContent=e.message;$('feed').textContent='ERRO';
+ }
+}
+async function refreshEngine(){
+ $('refresh').disabled=true;
+ const [s,a]=await Promise.allSettled([get('/engine/status'),get('/engine/agents')]);
+ if(s.status==='fulfilled'){$('engine').textContent='RESPONDENDO';$('engineTime').textContent='Status recebido · '+stamp();log('GET /engine/status respondeu.')}
+ else{$('engine').textContent='INDISPONÍVEL';$('engineTime').textContent='Não foi possível confirmar';log('Falha /engine/status: '+s.reason.message)}
+ if(a.status==='fulfilled'){const n=findCount(a.value);$('agents').textContent=n===null?'Resposta recebida':String(n);$('agentDetail').textContent=n===null?'API respondeu, mas o formato de agentes precisa ser mapeado.':n+' registros recebidos do endpoint de agentes.';$('micStatus').textContent='API respondeu';$('micDot').className='dot ok';log('GET /engine/agents respondeu.')}
+ else{$('agents').textContent='—';$('micStatus').textContent='Sem conexão';$('micDot').className='dot bad';log('Falha /engine/agents: '+a.reason.message)}
  $('updated').textContent='Atualizado: '+stamp();$('refresh').disabled=false;
 }
-$('refresh').addEventListener('click',refresh);refresh();setInterval(refresh,30000);
+$('refresh').addEventListener('click',()=>{refreshMarket();refreshEngine()});
+refreshMarket();refreshEngine();
+setInterval(refreshMarket,1000);
+setInterval(refreshEngine,5000);
 </script></body></html>
