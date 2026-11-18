@@ -1,3 +1,4 @@
+import { runAutonomousTick } from "./engine.js";
 const SYMBOLS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT"];
 const STREAMS=SYMBOLS.flatMap(s=>[s.toLowerCase()+"@bookTicker",s.toLowerCase()+"@kline_1m"]).join("/");
 const BINANCE_WS="wss://stream.binance.com:9443/stream?streams="+STREAMS;
@@ -28,12 +29,19 @@ export class BinanceMarketFeed {
     if(!this.isOpen()) await this.connect();
     const now=Date.now(),quotes={};
     for(const [symbol,q] of Object.entries(this.quotes)) if(now-Number(q.timestamp)<=15000) quotes[symbol]=q;
-    if(Object.keys(quotes).length){
+    const feed={ok:Object.keys(quotes).length>0,connected:this.isOpen(),source:"BINANCE_WEBSOCKET",lastMessageAt:this.lastMessageAt,quotes,candles:this.candles,staleSymbols:SYMBOLS.filter(s=>!quotes[s])};
+    if(feed.ok){
+      try{
+        const engine=await runAutonomousTick(this.env,this.candles||{});
+        console.log("MR_ZERO_LIVE_ENGINE",JSON.stringify({ok:engine?.ok,marketsOk:engine?.results?.length||0,marketsFailed:engine?.errors?.length||0,forecastsCreated:engine?.results?.reduce((n,x)=>n+(x.forecastsCreated||0),0)||0,forecastsEvaluated:engine?.results?.reduce((n,x)=>n+(x.evaluated||0),0)||0,errors:engine?.errors||[]}));
+      }catch(e){console.log("MR_ZERO_LIVE_ENGINE_ERROR",String(e?.message||e));}
       try{
         const {runRaceCycle}=await import("./race.js");
-        const result=await runRaceCycle(this.env,{ok:true,connected:this.isOpen(),source:"BINANCE_WEBSOCKET",lastMessageAt:this.lastMessageAt,quotes,staleSymbols:SYMBOLS.filter(s=>!quotes[s])});
+        const result=await runRaceCycle(this.env,feed);
         console.log("MR_ZERO_LIVE_RACE",JSON.stringify({ok:result?.ok,skipped:result?.skipped,quoteCount:result?.quoteCount,error:result?.error||null}));
       }catch(e){console.log("MR_ZERO_LIVE_RACE_ERROR",String(e?.message||e));}
+    } else {
+      console.log("MR_ZERO_FEED_WAITING",JSON.stringify({connected:this.isOpen(),freshQuotes:0,lastMessageAt:this.lastMessageAt||null}));
     }
     this.ctx.storage.setAlarm(Date.now()+15000).catch(()=>{});
   }
