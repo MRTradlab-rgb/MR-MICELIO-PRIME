@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { BinanceMarketFeed } from "../market-feed.js";
 
 class FakeSocket {
-  constructor(){ this.readyState=0; this.listeners={}; }
+  static instances=[];
+  constructor(){ this.readyState=0; this.listeners={}; FakeSocket.instances.push(this); }
   addEventListener(name,fn){ this.listeners[name]=fn; }
-  send(){}
+  send(data){ this.sent=data; }
+  emit(name,data){ if(name==="open")this.readyState=1; this.listeners[name]?.({data:typeof data==="string"?data:JSON.stringify(data)}); }
   close(){ this.readyState=3; }
 }
 function makeFeed(){
@@ -61,4 +63,25 @@ test("agrega ticks em candles de um minuto sem volume real",()=>{
   assert.equal(candle.open,65000);
   assert.equal(candle.close,65000);
   assert.equal(candle.volumeNote,"neutral_placeholder_no_exchange_volume");
+});
+
+test("health distingue socket aberto de fonte recebendo ticks",()=>{
+  const feed=makeFeed();
+  feed.sockets.binance=new FakeSocket();feed.sockets.binance.readyState=1;
+  assert.equal(feed.health().sources.binance.connected,false);
+  feed.record("BTCUSDT","binance",65000,64999,65001,Date.now());
+  assert.equal(feed.health().sources.binance.connected,true);
+});
+
+test("normaliza produto Coinbase e ignora mensagem de erro",()=>{
+  FakeSocket.instances=[];
+  globalThis.WebSocket=FakeSocket;
+  const feed=makeFeed();
+  feed.connectCoinbase();
+  const ws=FakeSocket.instances.at(-1);
+  ws.emit("open");
+  ws.emit("message",{type:"ticker",product_id:"BTC-USDT",best_bid:"65000",best_ask:"65002",price:"65001",time:new Date().toISOString()});
+  assert.equal(feed.quotes.BTCUSDT.coinbase.price,65001);
+  ws.emit("message",{type:"error",message:"unsupported product"});
+  assert.equal(feed.lastMessageAt.coinbase,0);
 });
