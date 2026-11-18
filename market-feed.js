@@ -37,10 +37,13 @@ export class BinanceMarketFeed {
     const receivedAt=now();this.quotes[symbol]??={};
     this.quotes[symbol][source]={price,bid,ask,exchangeTime:Number(exchangeTime)||null,receivedAt,timestamp:receivedAt,source:source.toUpperCase()+"_WEBSOCKET"};
     this.lastMessageAt[source]=receivedAt;
+    const latest=Object.values(this.quotes[symbol]).filter(q=>receivedAt-q.receivedAt<=MAX_AGE).sort((a,b)=>b.receivedAt-a.receivedAt)[0];
+    if(!latest)return;
+    const selectedPrice=latest.price;
     const minute=Math.floor(receivedAt/60000)*60000;this.candles[symbol]??=[];
     let c=this.candles[symbol].at(-1);
-    if(!c||c.openTime!==minute){c={openTime:minute,open:price,high:price,low:price,close:price,volume:1,closeTime:minute+59999,volumeNote:"neutral_placeholder_no_exchange_volume"};this.candles[symbol].push(c);if(this.candles[symbol].length>90)this.candles[symbol].shift();}
-    else{c.high=Math.max(c.high,price);c.low=Math.min(c.low,price);c.close=price;}
+    if(!c||c.openTime!==minute){c={openTime:minute,open:selectedPrice,high:selectedPrice,low:selectedPrice,close:selectedPrice,volume:1,closeTime:minute+59999,volumeNote:"neutral_placeholder_no_exchange_volume"};this.candles[symbol].push(c);if(this.candles[symbol].length>90)this.candles[symbol].shift();}
+    else{c.high=Math.max(c.high,selectedPrice);c.low=Math.min(c.low,selectedPrice);c.close=selectedPrice;}
     if(receivedAt-(this.lastPersistAt||0)>1000){this.lastPersistAt=receivedAt;this.ctx.storage.put("dual_feed_state",{quotes:this.quotes,candles:this.candles,lastMessageAt:this.lastMessageAt}).catch(()=>{});}
   }
   connectBinance(){
