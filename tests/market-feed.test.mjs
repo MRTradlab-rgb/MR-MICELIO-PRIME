@@ -33,9 +33,13 @@ test("aceita somente ativos e preços válidos",()=>{
 
 test("mantém cotações independentes por fonte e escolhe a mais recente",async()=>{
   const feed=makeFeed();
-  const t=Date.now();
-  feed.record("BTCUSDT","binance",65000,64999,65001,t);
-  feed.record("BTCUSDT","coinbase",65010,65009,65011,t+2);
+  const realNow=Date.now;
+  let clock=realNow();
+  Date.now=()=>clock;
+  feed.record("BTCUSDT","binance",65000,64999,65001,clock);
+  clock+=2;
+  feed.record("BTCUSDT","coinbase",65010,65009,65011,clock);
+  Date.now=realNow;
   globalThis.WebSocket=FakeSocket;
   const response=await feed.fetch(new Request("https://feed/snapshot"));
   const body=await response.json();
