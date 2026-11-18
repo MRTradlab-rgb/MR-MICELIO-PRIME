@@ -30,7 +30,7 @@ async function micelio(db,quotes){
 
 async function fetchLiveQuotes(env){
   if(!env.MARKET_FEED) throw Error("MARKET_FEED_BINDING_MISSING");
-  const id=env.MARKET_FEED.idFromName("binance-global");
+  const id=env.MARKET_FEED.idFromName("dual-global");
   const stub=env.MARKET_FEED.get(id);
   const response=await stub.fetch("https://market-feed/snapshot");
   const payload=await response.json();
