@@ -37,7 +37,7 @@ async function fetchLiveQuotes(env){
   if(!response.ok||!payload?.ok) throw Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
   return payload;
 }
-export async function runRaceCycle(env,suppliedFeed=null){
+export async function runRaceCycle(env,suppliedFeed=null,options={}){
   if(!env?.DB) throw Error("D1_BINDING_MISSING");
   await seed(env.DB);
   const quotes={},errors=[];
@@ -53,9 +53,13 @@ export async function runRaceCycle(env,suppliedFeed=null){
   await env.DB.prepare("INSERT INTO race_cycles(created_at,quote_count,quotes_json,status) VALUES(?,?,?,?)").bind(t,valid.length,JSON.stringify(quotes),"PROCESSING").run();
   const pos=await env.DB.prepare("SELECT symbol,quantity,entry_price FROM race_positions WHERE wallet_id='GEMMA'").all();
   let gd=[],ge=null,md=[],me=null;
-  const analyses=await Promise.allSettled([gemma(env,quotes,pos.results||[]),micelio(env.DB,quotes)]);
-  if(analyses[0].status==="fulfilled")gd=analyses[0].value;else ge=String(analyses[0].reason?.message||analyses[0].reason).slice(0,180);
-  if(analyses[1].status==="fulfilled")md=analyses[1].value;else me=String(analyses[1].reason?.message||analyses[1].reason).slice(0,180);
+  if(options.micelioOnly){
+    try{md=await micelio(env.DB,quotes);}catch(e){me=String(e?.message||e).slice(0,180);}
+  }else{
+    const analyses=await Promise.allSettled([gemma(env,quotes,pos.results||[]),micelio(env.DB,quotes)]);
+    if(analyses[0].status==="fulfilled")gd=analyses[0].value;else ge=String(analyses[0].reason?.message||analyses[0].reason).slice(0,180);
+    if(analyses[1].status==="fulfilled")md=analyses[1].value;else me=String(analyses[1].reason?.message||analyses[1].reason).slice(0,180);
+  }
   const exec=[];
   for(const [wallet,list] of [["GEMMA",gd],["MICELIO",md]]) for(const d of list){
     const q=quotes[d.symbol];
