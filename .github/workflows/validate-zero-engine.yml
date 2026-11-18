@@ -18,6 +18,7 @@ jobs:
         run: |
           node --check --input-type=module < worker.js
           node --check --input-type=module < engine.js
-          node --check --input-type=module < evolution.js\n          node --check --input-type=module < race.js
+          node --check --input-type=module < evolution.js
+          node --check --input-type=module < race.js
       - name: Check whitespace
         run: git diff --check
