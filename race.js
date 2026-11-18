@@ -23,7 +23,6 @@ async function fetchLiveQuote(symbol){
 export async function runRaceCycle(env){
   if(!env?.DB) throw Error("D1_BINDING_MISSING");
   if(!env?.AI) throw Error("AI_BINDING_UNAVAILABLE");
-  if(!env?.ENGINE_ADMIN_TOKEN) throw Error("ENGINE_ADMIN_TOKEN_MISSING");
   await seed(env.DB);
   const quotes={},errors=[];
   const fetched=await Promise.allSettled([...ALLOWED].map(async symbol=>[symbol,await fetchLiveQuote(symbol)]));
