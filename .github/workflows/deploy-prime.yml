@@ -13,7 +13,7 @@ jobs:
       - name: Checkout PRIME branch
         uses: actions/checkout@v4
         with:
-          ref: feature/prime-engine-gemma-final
+          ref: main
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,6 +24,8 @@ jobs:
         run: |
           node --check --input-type=module < worker.js
           node --check --input-type=module < engine.js
+          node --check --input-type=module < market-feed.js
+          node --check --input-type=module < race.js
           node --check --input-type=module < evolution.js
           node --check --input-type=module < micelio-open-bridge.js
 
