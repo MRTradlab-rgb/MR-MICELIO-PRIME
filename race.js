@@ -21,7 +21,6 @@ async function fetchLiveQuotes(env){
 }
 export async function runRaceCycle(env){
   if(!env?.DB) throw Error("D1_BINDING_MISSING");
-  if(!env?.AI) throw Error("AI_BINDING_UNAVAILABLE");
   await seed(env.DB);
   const quotes={},errors=[];
   let feed;
