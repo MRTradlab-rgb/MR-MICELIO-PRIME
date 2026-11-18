@@ -1,6 +1,15 @@
 name: Deploy MR Micelio Prime
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker.js'
+      - 'engine.js'
+      - 'market-feed.js'
+      - 'race.js'
+      - 'evolution.js'
+      - '.github/workflows/deploy-prime.yml'
   workflow_dispatch:
 
 permissions:
