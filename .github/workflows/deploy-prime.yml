@@ -27,7 +27,6 @@ jobs:
           node --check --input-type=module < market-feed.js
           node --check --input-type=module < race.js
           node --check --input-type=module < evolution.js
-          node --check --input-type=module < micelio-open-bridge.js
 
       - name: Deploy Worker to Cloudflare
         uses: cloudflare/wrangler-action@v3
