@@ -42,8 +42,12 @@ export class BinanceMarketFeed {
     if(this.persisting||!this.dirty)return;
     this.persisting=true;
     try{
-      await this.ctx.storage.put("feed_state",{quotes:this.quotes,candles:this.candles,lastMessageAt:this.lastMessageAt,lastPersistAt:now(),lastProcessedClose:this.lastProcessedClose,lastError:this.lastError,lastClose:this.lastClose,connectAttempts:this.connectAttempts});
-      this.lastPersistAt=now();this.dirty=false;
+      while(this.dirty){
+        this.dirty=false;
+        const snapshot={quotes:this.quotes,candles:this.candles,lastMessageAt:this.lastMessageAt,lastPersistAt:now(),lastProcessedClose:this.lastProcessedClose,lastError:this.lastError,lastClose:this.lastClose,connectAttempts:this.connectAttempts};
+        await this.ctx.storage.put("feed_state",snapshot);
+        this.lastPersistAt=snapshot.lastPersistAt;
+      }
     }catch(e){this.lastError="STORAGE_WRITE: "+String(e?.message||e);}
     finally{this.persisting=false;}
   }
