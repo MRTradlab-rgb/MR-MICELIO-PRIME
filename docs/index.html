@@ -24,7 +24,7 @@ main{max-width:1180px;margin:auto;padding:22px 16px 50px}.top{display:flex;justi
 <div class="card"><div class="row"><strong>GEMMA</strong><span class="status"><i class="dot" id="gemDot"></i><span id="gemStatus">Aguardando API</span></span></div><p class="small">Análise independente usando o mesmo feed de mercado.</p><div class="notice">Decisões, carteira virtual e operações ainda não estão disponíveis por uma rota pública de leitura.</div></div>
 </div>
 <h2 class="section">Carteiras virtuais e operações</h2>
-<div class="twocol"><div class="card"><div class="k">Carteiras / P&amp;L / posições</div><div class="v">API pendente</div><div class="small">Os dados da corrida estão protegidos no backend; não expor token administrativo no navegador.</div></div><div class="card"><div class="k">Compras e vendas simuladas</div><div class="v">API pendente</div><div class="small">Taxas, slippage e histórico serão exibidos quando houver endpoint público sanitizado.</div></div></div>
+<div class="twocol"><div class="card"><div class="k">Carteiras virtuais</div><div id="wallets" class="notice">Aguardando dados da simulação.</div></div><div class="card"><div class="k">Últimas operações simuladas</div><div id="trades" class="notice">Aguardando operações.</div></div></div>
 <h2 class="section">Diagnóstico de conexão</h2><div class="card"><div class="log" id="log">Inicializando painel…</div></div>
 <div class="foot">MR TradLab ZERO · Monitoramento somente leitura · Simulação virtual · <span id="updated">Ainda não atualizado</span></div>
 </main>
@@ -52,6 +52,29 @@ async function refreshMarket(){
   $('marketUpdated').textContent=e.message;$('feed').textContent='ERRO';
  }
 }
+async function refreshRace(){
+ try{
+  const d=await get('/race/public-status');
+  if(!d.ok)throw Error('API de corrida indisponível');
+  $('race').textContent='PAPER LIVE';
+  $('wallets').innerHTML=(d.wallets||[]).map(w=>'<div class="row"><strong>'+w.wallet_id+'</strong><span>Caixa: 
+ $('refresh').disabled=true;
+ const [s,a]=await Promise.allSettled([get('/engine/status'),get('/engine/agents')]);
+ if(s.status==='fulfilled'){$('engine').textContent='RESPONDENDO';$('engineTime').textContent='Status recebido · '+stamp();log('GET /engine/status respondeu.')}
+ else{$('engine').textContent='INDISPONÍVEL';$('engineTime').textContent='Não foi possível confirmar';log('Falha /engine/status: '+s.reason.message)}
+ if(a.status==='fulfilled'){const n=findCount(a.value);$('agents').textContent=n===null?'Resposta recebida':String(n);$('agentDetail').textContent=n===null?'API respondeu, mas o formato de agentes precisa ser mapeado.':n+' registros recebidos do endpoint de agentes.';$('micStatus').textContent='API respondeu';$('micDot').className='dot ok';log('GET /engine/agents respondeu.')}
+ else{$('agents').textContent='—';$('micStatus').textContent='Sem conexão';$('micDot').className='dot bad';log('Falha /engine/agents: '+a.reason.message)}
+ $('updated').textContent='Atualizado: '+stamp();$('refresh').disabled=false;
+}
+$('refresh').addEventListener('click',()=>{refreshMarket();refreshEngine();refreshRace();refreshRace()});
+refreshMarket();refreshEngine();
+setInterval(refreshMarket,1000);
+setInterval(refreshEngine,5000);\nsetInterval(refreshRace,5000);
+</script></body></html>+fmt(w.cash_balance)+'</span></div>').join('')||'Carteiras ainda não inicializadas.';
+  $('trades').innerHTML=(d.recentTrades||[]).slice(0,8).map(t=>'<div class="row"><span><strong>'+t.wallet_id+'</strong> '+t.side+' '+t.symbol+'</span><span>'+fmt(t.quantity)+' @ '+fmt(t.price)+'</span></div>').join('')||'Nenhuma operação registrada até agora.';
+ }catch(e){$('race').textContent='AGUARDANDO';$('wallets').textContent=e.message;$('trades').textContent='Sem dados públicos de operações.'}
+}
+function fmt(n){return Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:6})}
 async function refreshEngine(){
  $('refresh').disabled=true;
  const [s,a]=await Promise.allSettled([get('/engine/status'),get('/engine/agents')]);
