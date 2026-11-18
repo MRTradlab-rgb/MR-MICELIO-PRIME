@@ -54,7 +54,7 @@ export default {
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
   const url=new URL(request.url);
   if(url.pathname.startsWith("/race")) return handleRace(request,env,url,json);
-  if(url.pathname.startsWith("/market/")) { if(!env.MARKET_FEED) return json({ok:false,error:"MARKET_FEED_BINDING_MISSING"},503,request); const id=env.MARKET_FEED.idFromName("binance-global"); const stub=env.MARKET_FEED.get(id); const path=url.pathname==="/market/snapshot"?"/snapshot":url.pathname==="/market/health"?"/health":"/connect"; const result=await stub.fetch("https://market-feed"+path); return new Response(result.body,{status:result.status,headers:{"Content-Type":"application/json","Cache-Control":"no-store",...corsHeaders(request)}}); }
+  if(url.pathname.startsWith("/market/")) { if(!env.MARKET_FEED) return json({ok:false,error:"MARKET_FEED_BINDING_MISSING"},503,request); const id=env.MARKET_FEED.idFromName("dual-global"); const stub=env.MARKET_FEED.get(id); const path=url.pathname==="/market/snapshot"?"/snapshot":url.pathname==="/market/health"?"/health":"/connect"; const result=await stub.fetch("https://market-feed"+path); return new Response(result.body,{status:result.status,headers:{"Content-Type":"application/json","Cache-Control":"no-store",...corsHeaders(request)}}); }
   if(url.pathname.startsWith("/engine")) return handleEngine(request,env,url,json);
   if(url.pathname.startsWith("/evolution")) return handleEvolution(request,env,url,corsHeaders,json);
   if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat","GET /engine/status","GET /engine/agents","POST /engine/seed","POST /engine/tick"],health:"/health"},200,request);
