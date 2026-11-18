@@ -1,5 +1,3 @@
-import { runAutonomousTick } from "./engine.js";
-import { runRaceCycle } from "./race.js";
 
 const SYMBOLS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT"];
 const STREAMS=SYMBOLS.flatMap(s=>[s.toLowerCase()+"@bookTicker",s.toLowerCase()+"@kline_1m"]).join("/");
@@ -51,7 +49,6 @@ export class BinanceMarketFeed {
       const ws=new WebSocket(endpoint);this.socket=ws;
       ws.addEventListener("open",()=>{
         this.connecting=false;this.lastError=null;
-        this.ctx.storage.setAlarm(now()+15000).catch(e=>{this.lastError="ALARM_SET: "+String(e?.message||e);});
         this.persist();
         console.log("MR_ZERO_WS_OPEN",JSON.stringify({endpoint,attempts:this.connectAttempts}));
       });
@@ -80,7 +77,7 @@ export class BinanceMarketFeed {
       ws.addEventListener("close",event=>{
         this.connecting=false;this.socket=null;this.lastClose={code:event.code,reason:event.reason||"",at:now()};
         this.connectIndex=(this.connectIndex+1)%WS_URLS.length;
-        this.ctx.storage.setAlarm(now()+5000).catch(()=>{});
+        this.ctx.storage.setAlarm(now()+60000).catch(()=>{});
         this.persist();
         console.log("MR_ZERO_WS_CLOSE",JSON.stringify(this.lastClose));
       });
@@ -88,33 +85,22 @@ export class BinanceMarketFeed {
         this.lastError="BINANCE_WEBSOCKET_ERROR";
         this.connecting=false;
         try{ws.close();}catch{}
-        this.ctx.storage.setAlarm(now()+5000).catch(()=>{});
+        this.ctx.storage.setAlarm(now()+60000).catch(()=>{});
         this.persist();
       });
     }catch(e){
       this.connecting=false;this.socket=null;this.lastError="WEBSOCKET_CONSTRUCTOR: "+String(e?.stack||e?.message||e).slice(0,800);
       this.connectIndex=(this.connectIndex+1)%WS_URLS.length;
-      this.ctx.storage.setAlarm(now()+5000).catch(()=>{});
+      this.ctx.storage.setAlarm(now()+60000).catch(()=>{});
       await this.persist();
       console.log("MR_ZERO_WS_CONNECT_ERROR",this.lastError);
     }
   }
   async alarm(){
     await this.loadPromise;
-    if(!this.isOpen()&&!this.connecting)await this.connect();
-    const t=now(),quotes={};
-    for(const [s,q] of Object.entries(this.quotes))if(t-Number(q.timestamp)<=15000)quotes[s]=q;
-    const feed={ok:Object.keys(quotes).length>0,connected:this.isOpen(),source:"BINANCE_WEBSOCKET",lastMessageAt:this.lastMessageAt,quotes,candles:this.candles,staleSymbols:SYMBOLS.filter(s=>!quotes[s])};
-    if(feed.ok){
-      try{
-        const engine=await runAutonomousTick(this.env,this.candles||{});
-        console.log("MR_ZERO_LIVE_ENGINE",JSON.stringify({ok:engine?.ok,marketsOk:engine?.results?.length||0,marketsFailed:engine?.errors?.length||0,forecastsCreated:engine?.results?.reduce((n,x)=>n+(x.forecastsCreated||0),0)||0,forecastsEvaluated:engine?.results?.reduce((n,x)=>n+(x.evaluated||0),0)||0,errors:engine?.errors||[]}));
-      }catch(e){console.log("MR_ZERO_LIVE_ENGINE_ERROR",String(e?.stack||e?.message||e).slice(0,1200));}
-      try{
-        const result=await runRaceCycle(this.env,feed);
-        console.log("MR_ZERO_LIVE_RACE",JSON.stringify({ok:result?.ok,skipped:result?.skipped,quoteCount:result?.quoteCount,error:result?.error||null}));
-      }catch(e){console.log("MR_ZERO_LIVE_RACE_ERROR",String(e?.stack||e?.message||e).slice(0,1200));}
-    }else console.log("MR_ZERO_FEED_WAITING",JSON.stringify({connected:this.isOpen(),connecting:this.connecting,freshQuotes:0,lastMessageAt:this.lastMessageAt||null,lastError:this.lastError}));
-    this.ctx.storage.setAlarm(now()+15000).catch(e=>console.log("MR_ZERO_ALARM_ERROR",String(e?.message||e)));
+    if(!this.isOpen()&&!this.connecting) await this.connect();
+    // Engine execution is centralized in the once-per-minute Worker Cron.
+    // The alarm only recovers a disconnected socket; it never runs trading cycles.
+    console.log("MR_ZERO_WS_RECOVERY",JSON.stringify({connected:this.isOpen(),connecting:this.connecting,lastError:this.lastError}));
   }
 }
