@@ -32,7 +32,7 @@ async function ensureAgents(db) {
 }
 
 async function fetchCandles(symbol) {
-  const url=`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1m&limit=80`;
+  const url=`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=1m&limit=80`;
   const res=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(9000)});
   if(!res.ok) throw new Error(`BINANCE_HTTP_${res.status}_${symbol}`);
   const rows=await res.json();
