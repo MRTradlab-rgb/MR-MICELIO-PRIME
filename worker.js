@@ -4,7 +4,7 @@
  * Required binding: AI (Workers AI)
  */
 import { handleEvolution } from "./evolution.js";
-import { handleRace } from "./race.js";
+import { handleRace, runRaceCycle } from "./race.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
@@ -100,6 +100,10 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
  },
  async scheduled(controller,env,ctx) {
-  ctx.waitUntil(runAutonomousTick(env).catch(err=>console.error("MR_ZERO_ENGINE_TICK_FAILED",String(err&&err.message||err))));
+  ctx.waitUntil((async()=>{
+   const engine=await runAutonomousTick(env).catch(err=>({ok:false,error:String(err&&err.message||err)}));
+   const race=await runRaceCycle(env).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
+   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
+  })());
  }
 };
