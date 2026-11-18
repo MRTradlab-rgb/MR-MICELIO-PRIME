@@ -18,11 +18,23 @@ export class BinanceMarketFeed {
     this.connecting=true;
     try{
       const ws=new WebSocket(BINANCE_WS);this.socket=ws;
-      ws.addEventListener("open",()=>{this.connecting=false;this.ctx.storage.setAlarm(Date.now()+25000).catch(()=>{});});
+      ws.addEventListener("open",()=>{this.connecting=false;this.ctx.storage.setAlarm(Date.now()+15000).catch(()=>{});});
       ws.addEventListener("message",event=>{try{const msg=JSON.parse(event.data);const d=msg.data||msg;const symbol=String(d.s||"").toUpperCase();if(!SYMBOLS.includes(symbol))return;const bid=Number(d.b),ask=Number(d.a);if(!(bid>0&&ask>=bid))return;const timestamp=Number(d.E)||Date.now();this.quotes[symbol]={price:(bid+ask)/2,bid,ask,timestamp,source:"BINANCE_WEBSOCKET"};this.lastMessageAt=Date.now();if(this.lastMessageAt-this.lastPersistAt>1000){this.lastPersistAt=this.lastMessageAt;this.ctx.storage.put("feed_state",{quotes:this.quotes,lastMessageAt:this.lastMessageAt}).catch(()=>{});}}catch{}});
       ws.addEventListener("close",()=>{this.connecting=false;this.socket=null;this.ctx.storage.setAlarm(Date.now()+5000).catch(()=>{});});
       ws.addEventListener("error",()=>{this.connecting=false;try{ws.close();}catch{}});
     }catch{this.connecting=false;this.ctx.storage.setAlarm(Date.now()+10000).catch(()=>{});}
   }
-  async alarm(){if(!this.isOpen())await this.connect();else this.ctx.storage.setAlarm(Date.now()+25000).catch(()=>{});}
+  async alarm(){
+    if(!this.isOpen()) await this.connect();
+    const now=Date.now(),quotes={};
+    for(const [symbol,q] of Object.entries(this.quotes)) if(now-Number(q.timestamp)<=15000) quotes[symbol]=q;
+    if(Object.keys(quotes).length){
+      try{
+        const {runRaceCycle}=await import("./race.js");
+        const result=await runRaceCycle(this.env,{ok:true,connected:this.isOpen(),source:"BINANCE_WEBSOCKET",lastMessageAt:this.lastMessageAt,quotes,staleSymbols:SYMBOLS.filter(s=>!quotes[s])});
+        console.log("MR_ZERO_LIVE_RACE",JSON.stringify({ok:result?.ok,skipped:result?.skipped,quoteCount:result?.quoteCount,error:result?.error||null}));
+      }catch(e){console.log("MR_ZERO_LIVE_RACE_ERROR",String(e?.message||e));}
+    }
+    this.ctx.storage.setAlarm(Date.now()+15000).catch(()=>{});
+  }
 }
