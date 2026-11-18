@@ -141,7 +141,7 @@ async function createForecasts(db,symbol,candles) {
   return {created,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
 }
 
-export async function runAutonomousTick(env) {
+export async function runAutonomousTick(env, suppliedCandles = {}) {
   if(!env.DB) throw new Error("D1_BINDING_MISSING");
   await ensureAgents(env.DB);
   const started=Date.now(), results=[], errors=[];
