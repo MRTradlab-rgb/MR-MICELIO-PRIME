@@ -31,16 +31,14 @@ async function ensureAgents(db) {
   ).bind(a.id,a.archetype,a.strategy,a.threshold,stamp)));
 }
 
-async function fetchCandles(symbol) {
-  const url=`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=1m&limit=80`;
-  const res=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(9000)});
-  if(!res.ok) throw new Error(`BINANCE_HTTP_${res.status}_${symbol}`);
-  const rows=await res.json();
-  if(!Array.isArray(rows)||rows.length<30) throw new Error(`INSUFFICIENT_CANDLES_${symbol}`);
-  const closed=rows.filter(r=>Number(r[6])<Date.now()-1500);
-  if(closed.length<25) throw new Error(`NO_CLOSED_CANDLES_${symbol}`);
-  if(Date.now()-Number(closed.at(-1)[6])>180000) throw new Error(`STALE_CANDLES_${symbol}`);
-  return closed.map(r=>({openTime:Number(r[0]),open:Number(r[1]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[5]),closeTime:Number(r[6])}));
+function getWebSocketCandles(symbol, suppliedCandles) {
+  const rows=Array.isArray(suppliedCandles?.[symbol])?suppliedCandles[symbol]:[];
+  const closed=rows.filter(r=>r&&Number.isFinite(Number(r.openTime))&&Number.isFinite(Number(r.closeTime))&&Number(r.open)>0&&Number(r.close)>0&&Number(r.high)>0&&Number(r.low)>0&&Number(r.volume)>=0&&Number(r.closeTime)<Date.now()-1000)
+    .map(r=>({openTime:Number(r.openTime),open:Number(r.open),high:Number(r.high),low:Number(r.low),close:Number(r.close),volume:Number(r.volume),closeTime:Number(r.closeTime)}))
+    .sort((a,b)=>a.openTime-b.openTime);
+  if(closed.length<25) throw new Error(`INSUFFICIENT_WEBSOCKET_CANDLES_${symbol}_${closed.length}`);
+  if(Date.now()-closed.at(-1).closeTime>180000) throw new Error(`STALE_WEBSOCKET_CANDLES_${symbol}`);
+  return closed.slice(-80);
 }
 
 function features(c) {
@@ -146,7 +144,7 @@ export async function runAutonomousTick(env, suppliedCandles = {}) {
   await ensureAgents(env.DB);
   const started=Date.now(), results=[], errors=[];
   const outcomes=await Promise.allSettled(SYMBOLS.map(async symbol=>{
-    const candles=await fetchCandles(symbol);
+    const candles=getWebSocketCandles(symbol,suppliedCandles);
     await saveCandle(env.DB,symbol,candles.at(-1));
     const evaluated=await evaluateDue(env.DB,symbol,candles);
     const forecast=await createForecasts(env.DB,symbol,candles);
