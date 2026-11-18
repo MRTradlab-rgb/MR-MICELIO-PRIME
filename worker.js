@@ -121,7 +121,7 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
     return;
    }
    const engine=await runAutonomousTick(env,feed.candles||{}).catch(err=>({ok:false,error:String(err&&err.message||err)}));
-   const race=await runRaceCycle(env,feed).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
+   const race=await runRaceCycle(env,feed,{micelioOnly:true}).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
    console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
   })());
  }
