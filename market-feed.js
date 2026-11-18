@@ -35,7 +35,7 @@ export class BinanceMarketFeed {
   record(symbol,source,price,bid,ask,exchangeTime){
     if(!SYMBOLS.includes(symbol)||!(price>0))return;
     const receivedAt=now();this.quotes[symbol]??={};
-    this.quotes[symbol][source]={price,bid,ask,exchangeTime:Number(exchangeTime)||null,receivedAt,source:source.toUpperCase()+"_WEBSOCKET"};
+    this.quotes[symbol][source]={price,bid,ask,exchangeTime:Number(exchangeTime)||null,receivedAt,timestamp:receivedAt,source:source.toUpperCase()+"_WEBSOCKET"};
     this.lastMessageAt[source]=receivedAt;
     const minute=Math.floor(receivedAt/60000)*60000;this.candles[symbol]??=[];
     let c=this.candles[symbol].at(-1);
