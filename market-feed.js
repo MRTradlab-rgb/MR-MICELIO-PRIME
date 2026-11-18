@@ -30,7 +30,7 @@ export class BinanceMarketFeed {
     return this.response({ok:false,error:"NOT_FOUND"},404);
   }
   response(body,status=200){return new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json","Cache-Control":"no-store"}});}
-  health(){const sources={};for(const k of ["binance","coinbase"])sources[k]={connected:this.sockets[k]?.readyState===1,lastMessageAt:this.lastMessageAt[k]||0};return{sources,connected:Object.values(sources).some(x=>x.connected),symbols:SYMBOLS.length};}
+  health(){const t=now(),sources={};for(const k of ["binance","coinbase"]){const last=this.lastMessageAt[k]||0;sources[k]={socketOpen:this.sockets[k]?.readyState===1,connected:Boolean(last&&t-last<=MAX_AGE),lastMessageAt:last,ageMs:last?t-last:null};}return{sources,connected:Object.values(sources).some(x=>x.connected),symbols:SYMBOLS.length};}
   async connectAll(){this.connectBinance();this.connectCoinbase();}
   record(symbol,source,price,bid,ask,exchangeTime){
     if(!SYMBOLS.includes(symbol)||!(price>0))return;
@@ -59,7 +59,7 @@ export class BinanceMarketFeed {
     if(this.sockets.coinbase?.readyState===1||this.connecting.coinbase)return;this.connecting.coinbase=true;
     try{const ws=new WebSocket(COINBASE_WS);this.sockets.coinbase=ws;
       ws.addEventListener("open",()=>{this.connecting.coinbase=false;ws.send(JSON.stringify({type:"subscribe",product_ids:BASES.map(b=>b+"-USDT"),channels:["ticker"]}));this.ctx.storage.setAlarm(now()+20000).catch(()=>{});});
-      ws.addEventListener("message",e=>{try{const d=JSON.parse(e.data);if(d.type!=="ticker")return;const s=String(d.product_id||"").replace("-","")+"".replace("-","");const symbol=s.replace(/USDT$/,"USDT");const bid=Number(d.best_bid),ask=Number(d.best_ask),price=Number(d.price);this.record(symbol,"coinbase",bid>0&&ask>=bid?(bid+ask)/2:price,bid,ask,Date.parse(d.time));}catch{}});
+      ws.addEventListener("message",e=>{try{const d=JSON.parse(e.data);if(d.type==="error"){this.lastMessageAt.coinbase=0;return;}if(d.type!=="ticker")return;const product=String(d.product_id||"").toUpperCase();const symbol=product.replace(/-/g,"");if(!symbol.endsWith("USDT"))return;const bid=Number(d.best_bid),ask=Number(d.best_ask),price=Number(d.price);const mid=bid>0&&ask>=bid?(bid+ask)/2:price;if(!Number.isFinite(mid)||mid<=0)return;this.record(symbol,"coinbase",mid,bid>0?bid:null,ask>0?ask:null,Date.parse(d.time));}catch{}});
       ws.addEventListener("close",()=>{this.connecting.coinbase=false;this.sockets.coinbase=null;this.ctx.storage.setAlarm(now()+5000).catch(()=>{});});
       ws.addEventListener("error",()=>{this.connecting.coinbase=false;try{ws.close();}catch{}});
     }catch{this.connecting.coinbase=false;this.ctx.storage.setAlarm(now()+10000).catch(()=>{});}
