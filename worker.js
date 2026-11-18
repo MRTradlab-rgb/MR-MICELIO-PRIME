@@ -104,9 +104,25 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
  },
  async scheduled(controller,env,ctx) {
   ctx.waitUntil((async()=>{
-   const engine=await runAutonomousTick(env).catch(err=>({ok:false,error:String(err&&err.message||err)}));
-   const race=await runRaceCycle(env).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
-   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
+   let feed=null;
+   try {
+    if(!env.MARKET_FEED) throw new Error("MARKET_FEED_BINDING_MISSING");
+    const id=env.MARKET_FEED.idFromName("binance-global");
+    const stub=env.MARKET_FEED.get(id);
+    const response=await stub.fetch("https://market-feed/snapshot");
+    feed=await response.json();
+    if(!response.ok||!feed?.ok) throw new Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
+   } catch(e) {
+    const message=String(e&&e.message||e);
+    console.log("MR_ZERO_FEED_SNAPSHOT_ERROR",message);
+    const engine={ok:false,error:message};
+    const race={ok:false,mode:"PAPER_ONLY",error:message,quoteCount:0};
+    console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:false,raceOk:false,quoteCount:0,raceError:message}));
+    return;
+   }
+   const engine=await runAutonomousTick(env,feed.candles||{}).catch(err=>({ok:false,error:String(err&&err.message||err)}));
+   const race=await runRaceCycle(env,feed).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
+   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
   })());
  }
 };
