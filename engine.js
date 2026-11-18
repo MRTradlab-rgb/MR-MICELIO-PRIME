@@ -154,7 +154,7 @@ export async function runAutonomousTick(env) {
     const quote=market.quotes?.[symbol];
     const candles=market.candles?.[symbol];
     if(!quote||!Number.isFinite(Number(quote.price))||Number(quote.price)<=0||Date.now()-Number(quote.receivedAt||quote.timestamp)>15000) throw new Error("STALE_OR_INVALID_SHARED_QUOTE");
-    if(!Array.isArray(candles)||candles.length<25) throw new Error("INSUFFICIENT_SHARED_WEBSOCKET_HISTORY");
+    if(!Array.isArray(candles)||candles.length<13) throw new Error("INSUFFICIENT_SHARED_WEBSOCKET_HISTORY");
     await saveCandle(env.DB,symbol,candles.at(-1));
     const evaluated=await evaluateDue(env.DB,symbol,candles);
     const forecast=await createForecasts(env.DB,symbol,candles);
