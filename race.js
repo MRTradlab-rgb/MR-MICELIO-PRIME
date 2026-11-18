@@ -10,27 +10,23 @@ function parse(r){let s=typeof r==="string"?r:r?.response||r?.output_text||r?.te
 async function gemma(env,quotes,positions){if(!env.AI)throw Error("AI_BINDING_UNAVAILABLE");const prompt='Você é GEMMA PRIME, trader de SIMULAÇÃO em tempo real, não assistente de conversa. Para cada ativo decida BUY, SELL ou HOLD com base apenas nas cotações e posições fornecidas. Não invente dados. BUY somente com sinal claro; SELL apenas para fechar posição existente; caso contrário HOLD. Retorne somente JSON válido: {"decisions":[{"symbol":"BTCUSDT","action":"HOLD","confidence":0.0,"reason":"..."}]}. confidence 0..1. Cotações: '+JSON.stringify(quotes)+'. Posições: '+JSON.stringify(positions);const r=await env.AI.run("@cf/google/gemma-4-26b-a4b-it",{messages:[{role:"user",content:prompt}],max_tokens:700,temperature:.1});const d=parse(r);if(!d)throw Error("GEMMA_INVALID_DECISIONS");return d;}
 async function micelio(db,quotes){const out=[];for(const s of Object.keys(quotes)){let x=null;try{x=await db.prepare("SELECT direction,COUNT(*) votes,AVG(confidence) confidence FROM engine_forecasts WHERE symbol=? AND status='PENDING' AND created_at>=datetime('now','-3 minutes') GROUP BY direction ORDER BY votes DESC LIMIT 1").bind(s).first();}catch{}out.push({symbol:s,action:Number(x?.votes||0)>=3?(x.direction==="BUY"?"BUY":"SELL"):"HOLD",confidence:Number(x?.confidence||0),reason:Number(x?.votes||0)>=3?"Consenso das previsões pendentes":"Sem consenso verificável"});}return out;}
 
-async function fetchLiveQuote(symbol){
-  const url="https://api.binance.com/api/v3/ticker/bookTicker?symbol="+encodeURIComponent(symbol);
-  const res=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(QUOTE_TIMEOUT_MS)});
-  if(!res.ok) throw Error("BINANCE_HTTP_"+res.status+"_"+symbol);
-  const data=await res.json();
-  const bid=Number(data?.bidPrice),ask=Number(data?.askPrice);
-  if(data?.symbol!==symbol||!Number.isFinite(bid)||!Number.isFinite(ask)||bid<=0||ask<=0||ask<bid) throw Error("INVALID_BOOK_"+symbol);
-  const receivedAt=Date.now();
-  return {price:(bid+ask)/2,timestamp:receivedAt,bid,ask,source:"BINANCE_BOOK_TICKER"};
+async function fetchLiveQuotes(env){
+  if(!env.MARKET_FEED) throw Error("MARKET_FEED_BINDING_MISSING");
+  const id=env.MARKET_FEED.idFromName("binance-global");
+  const stub=env.MARKET_FEED.get(id);
+  const response=await stub.fetch("https://market-feed/snapshot");
+  const payload=await response.json();
+  if(!response.ok||!payload?.ok) throw Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
+  return payload;
 }
 export async function runRaceCycle(env){
   if(!env?.DB) throw Error("D1_BINDING_MISSING");
-  if(!env?.AI) throw Error("AI_BINDING_UNAVAILABLE");
   await seed(env.DB);
   const quotes={},errors=[];
-  const fetched=await Promise.allSettled([...ALLOWED].map(async symbol=>[symbol,await fetchLiveQuote(symbol)]));
-  for(let i=0;i<fetched.length;i++){
-    const item=fetched[i];
-    if(item.status==="fulfilled") quotes[item.value[0]]=item.value[1];
-    else errors.push({symbol:[...ALLOWED][i],error:String(item.reason?.message||item.reason).slice(0,160)});
-  }
+  let feed;
+  try{feed=await fetchLiveQuotes(env);}catch(e){return {ok:false,mode:"PAPER_ONLY",error:String(e?.message||e),quoteCount:0,errors};}
+  for(const [symbol,q] of Object.entries(feed.quotes||{})) if(ALLOWED.has(symbol)) quotes[symbol]=q;
+  for(const symbol of feed.staleSymbols||[]) errors.push({symbol,error:"NO_FRESH_WEBSOCKET_TICK"});
   const valid=Object.values(quotes).filter(q=>Number.isFinite(q.price)&&q.price>0&&Date.now()-q.timestamp<=QUOTE_MAX_AGE_MS);
   if(!valid.length) return {ok:false,mode:"PAPER_ONLY",error:"NO_FRESH_QUOTES",quoteCount:0,errors};
   const last=await env.DB.prepare("SELECT created_at FROM race_cycles ORDER BY id DESC LIMIT 1").first();
@@ -49,7 +45,7 @@ export async function runRaceCycle(env){
   }
   const status=ge?"PARTIAL":"COMPLETED";
   await env.DB.prepare("UPDATE race_cycles SET status=? WHERE id=(SELECT MAX(id) FROM race_cycles)").bind(status).run();
-  return {ok:true,mode:"PAPER_ONLY",source:"BINANCE_BOOK_TICKER",quoteCount:valid.length,quoteErrors:errors,gemmaError:ge,decisions:{gemma:gd,micelio:md},executions:exec,wallets:await state(env.DB)};
+  return {ok:true,mode:"PAPER_ONLY",source:"BINANCE_WEBSOCKET",feedConnected:feed.connected,feedLastMessageAt:feed.lastMessageAt,quoteCount:valid.length,quoteErrors:errors,gemmaError:ge,decisions:{gemma:gd,micelio:md},executions:exec,wallets:await state(env.DB)};
 }
 
 export async function handleRace(request,env,url,json){if(!env.ENGINE_ADMIN_TOKEN||request.headers.get("Authorization")!==`Bearer ${env.ENGINE_ADMIN_TOKEN}`)return json({ok:false,error:"UNAUTHORIZED"},401,request);if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);await seed(env.DB);if(request.method==="GET"&&url.pathname==="/race/status")return json({ok:true,...await state(env.DB)},200,request);if(request.method==="POST"&&url.pathname==="/race/snapshot"){let b;try{b=await request.json();}catch{return json({ok:false,error:"INVALID_JSON"},400,request);}const q={};for(const [s,v] of Object.entries(b?.quotes||{})){const p=Number(v?.price),ts=Number(v?.timestamp);if(ALLOWED.has(s)&&p>0&&Number.isFinite(p)&&Number.isFinite(ts)&&Math.abs(Date.now()-ts)<=15000)q[s]={price:p,timestamp:ts};}if(!Object.keys(q).length)return json({ok:false,error:"NO_FRESH_QUOTES",maxAgeMs:15000},422,request);const last=await env.DB.prepare("SELECT created_at FROM race_cycles ORDER BY id DESC LIMIT 1").first();if(last&&Date.now()-Date.parse(last.created_at)<20000)return json({ok:true,skipped:true,reason:"CYCLE_THROTTLED",...await state(env.DB)},200,request);const t=now();await env.DB.prepare("INSERT INTO race_cycles(created_at,quote_count,quotes_json,status) VALUES(?,?,?,?)").bind(t,Object.keys(q).length,JSON.stringify(q),"PROCESSING").run();const pos=await env.DB.prepare("SELECT symbol,quantity,entry_price FROM race_positions WHERE wallet_id='GEMMA'").all();let gd=[],ge=null;try{gd=await gemma(env,q,pos.results||[]);}catch(e){ge=String(e.message||e).slice(0,180);}const md=await micelio(env.DB,q),exec=[];for(const [wallet,list] of [["GEMMA",gd],["MICELIO",md]])for(const d of list)if(Number(d.confidence||0)>=.35&&q[d.symbol])exec.push({wallet,...d,execution:await trade(env.DB,wallet,d.symbol,d.action,q[d.symbol].price,d.reason)});await env.DB.prepare("UPDATE race_cycles SET status=? WHERE id=(SELECT MAX(id) FROM race_cycles)").bind(ge?"PARTIAL":"COMPLETED").run();return json({ok:true,mode:"PAPER_ONLY",quoteCount:Object.keys(q).length,gemmaError:ge,decisions:{gemma:gd,micelio:md},executions:exec,wallets:await state(env.DB)},200,request);}return json({ok:false,error:"NOT_FOUND",endpoints:["GET /race/status","POST /race/snapshot"]},404,request);}

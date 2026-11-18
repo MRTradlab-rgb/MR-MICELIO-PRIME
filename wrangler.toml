@@ -12,3 +12,11 @@ database_id = "5627481f-d743-49d8-b96e-6905bac65708"
 
 [triggers]
 crons = ["* * * * *"]
+
+[[durable_objects.bindings]]
+name = "MARKET_FEED"
+class_name = "BinanceMarketFeed"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BinanceMarketFeed"]
