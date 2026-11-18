@@ -31,16 +31,13 @@ async function ensureAgents(db) {
   ).bind(a.id,a.archetype,a.strategy,a.threshold,stamp)));
 }
 
-async function fetchCandles(symbol) {
-  const url=`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1m&limit=80`;
-  const res=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(9000)});
-  if(!res.ok) throw new Error(`BINANCE_HTTP_${res.status}_${symbol}`);
-  const rows=await res.json();
-  if(!Array.isArray(rows)||rows.length<30) throw new Error(`INSUFFICIENT_CANDLES_${symbol}`);
-  const closed=rows.filter(r=>Number(r[6])<Date.now()-1500);
-  if(closed.length<25) throw new Error(`NO_CLOSED_CANDLES_${symbol}`);
-  if(Date.now()-Number(closed.at(-1)[6])>180000) throw new Error(`STALE_CANDLES_${symbol}`);
-  return closed.map(r=>({openTime:Number(r[0]),open:Number(r[1]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[5]),closeTime:Number(r[6])}));
+async function fetchSharedMarketSnapshot(env) {
+  if(!env.MARKET_FEED) throw new Error("MARKET_FEED_BINDING_MISSING");
+  const id=env.MARKET_FEED.idFromName("dual-global");
+  const response=await env.MARKET_FEED.get(id).fetch("https://market-feed/snapshot");
+  const payload=await response.json();
+  if(!response.ok||!payload?.ok) throw new Error("NO_FRESH_DUAL_WEBSOCKET_QUOTES");
+  return payload;
 }
 
 function features(c) {
@@ -145,12 +142,23 @@ export async function runAutonomousTick(env) {
   if(!env.DB) throw new Error("D1_BINDING_MISSING");
   await ensureAgents(env.DB);
   const started=Date.now(), results=[], errors=[];
+  let market;
+  try { market=await fetchSharedMarketSnapshot(env); }
+  catch(e) {
+    const stamp=nowIso();
+    await env.DB.prepare("INSERT INTO engine_runs(run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated,details) VALUES (?,?,?,?,?,?,?)")
+      .bind(stamp,Date.now()-started,0,SYMBOLS.length,0,0,JSON.stringify({error:String(e?.message||e),source:"DUAL_WEBSOCKET"})).run();
+    return {ok:false,source:"DUAL_WEBSOCKET",error:String(e?.message||e),realOrdersEnabled:false};
+  }
   const outcomes=await Promise.allSettled(SYMBOLS.map(async symbol=>{
-    const candles=await fetchCandles(symbol);
+    const quote=market.quotes?.[symbol];
+    const candles=market.candles?.[symbol];
+    if(!quote||!Number.isFinite(Number(quote.price))||Number(quote.price)<=0||Date.now()-Number(quote.receivedAt||quote.timestamp)>15000) throw new Error("STALE_OR_INVALID_SHARED_QUOTE");
+    if(!Array.isArray(candles)||candles.length<25) throw new Error("INSUFFICIENT_SHARED_WEBSOCKET_HISTORY");
     await saveCandle(env.DB,symbol,candles.at(-1));
     const evaluated=await evaluateDue(env.DB,symbol,candles);
     const forecast=await createForecasts(env.DB,symbol,candles);
-    return {symbol,price:candles.at(-1).close,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,features:forecast.features};
+    return {symbol,price:Number(quote.price),source:quote.selectedSource,sourceQuotes:quote.sources,candleTime:new Date(candles.at(-1).openTime).toISOString(),evaluated,forecastsCreated:forecast.created,features:forecast.features};
   }));
   outcomes.forEach((item,i)=>{
     if(item.status==="fulfilled") results.push(item.value);
@@ -229,7 +237,7 @@ export async function handleEngine(request,env,url,json) {
       env.DB.prepare("SELECT COUNT(*) AS total FROM engine_agents WHERE status='PAUSED'").first()
     ]);
     const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
-    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),activeAgents:Number(agents?.total||0)-Number(paused?.total||0),pausedAgents:Number(paused?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),activeAgents:Number(agents?.total||0)-Number(paused?.total||0),pausedAgents:Number(paused?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m candles aggregated from shared Binance + Coinbase WebSockets",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
   }
   if(request.method==="GET"&&url.pathname==="/engine/agents") {
     await ensureAgents(env.DB);
