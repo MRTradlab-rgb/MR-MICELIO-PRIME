@@ -25,3 +25,11 @@ new_sqlite_classes = ["BinanceMarketFeed"]
 # CORS_ALLOWED_ORIGINS = "https://your-frontend.example,https://another.example"
 # EVOLUTION_REWARDS_ENABLED = "false" (default; set true only after trusted metrics validation)
 # Secrets: ENGINE_ADMIN_TOKEN and EVOLUTION_ADMIN_TOKEN (never commit values)
+
+[observability]
+enabled = true
+head_sampling_rate = 0.10
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.05
