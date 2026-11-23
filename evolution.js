@@ -5,6 +5,8 @@ const ARCHETYPES = [
 const now = () => new Date().toISOString();
 function safeInt(v,min=0,max=1000000){const n=Number(v);return Number.isInteger(n)?Math.max(min,Math.min(max,n)):null;}
 async function ensureAgents(db){
+  const existing=await db.prepare("SELECT COUNT(*) AS total FROM evolution_agents").first();
+  if(Number(existing?.total||0)>=ARCHETYPES.length) return;
   const stamp=now();
   await db.batch(ARCHETYPES.map(a=>db.prepare(
     "INSERT OR IGNORE INTO evolution_agents (agent_id, archetype, specialty, level, xp, cox_balance, total_predictions, correct_predictions, repeated_errors, created_at, updated_at) VALUES (?, ?, ?, 1, 0, 0, 0, 0, 0, ?, ?)"
@@ -43,9 +45,8 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
     const repeatedErrors=safeInt(body.repeatedErrors,0,100000);
     if(!/^agent-(0[1-9]|[1-4][0-9]|50)$/.test(agentId)||!eventId||predictions===null||correct===null||correct>predictions||repeatedErrors===null) return jsonError(json,request,"INVALID_METRICS","Informe agente, eventId único e métricas inteiras válidas.");
     await ensureAgents(env.DB);
-    const duplicate=await env.DB.prepare("SELECT id FROM evolution_events WHERE source_event_id=?").bind(eventId).first();
-    if(duplicate) return jsonError(json,request,"DUPLICATE_EVENT","Este lote já foi processado; nenhuma recompensa foi repetida.",409);
     const existing=await env.DB.prepare("SELECT * FROM evolution_agents WHERE agent_id=?").bind(agentId).first();
+    if(!existing) return jsonError(json,request,"AGENT_NOT_FOUND","Agente não encontrado.",404);
     const accuracy=correct/predictions;
     const improvement=existing.total_predictions>0 ? accuracy-(existing.correct_predictions/Math.max(1,existing.total_predictions)) : 0;
     const qualified=predictions>=20;
@@ -56,12 +57,15 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
     const xp=Math.round(correct*2 + (repeatedErrors===0?10:0) + (improvement>=0.03?20:0));
     const nextXp=Number(existing.xp)+xp;
     const level=1+Math.floor(nextXp/500);
+    const claimToken=crypto.randomUUID();
+    const eventDetails=JSON.stringify({predictions,correct,accuracy:Number((accuracy*100).toFixed(2)),repeatedErrors,improvement:Number((improvement*100).toFixed(2)),riskPassed,outOfSample,xp,individualReward});
     const ops=[
-      env.DB.prepare("UPDATE evolution_agents SET level=?, xp=?, cox_balance=cox_balance+?, total_predictions=?, correct_predictions=?, repeated_errors=?, updated_at=? WHERE agent_id=?").bind(level,nextXp,individualReward,nextTotal,nextCorrect,repeatedErrors,stamp,agentId),
-      env.DB.prepare("INSERT INTO evolution_events (agent_id,event_type,source_event_id,details,created_at) VALUES (?,?,?,?,?)").bind(agentId,"EVALUATION",eventId,JSON.stringify({predictions,correct,accuracy:Number((accuracy*100).toFixed(2)),repeatedErrors,improvement:Number((improvement*100).toFixed(2)),riskPassed,outOfSample,xp,individualReward}),stamp)
+      env.DB.prepare("INSERT OR IGNORE INTO evolution_events (agent_id,event_type,source_event_id,details,created_at,claim_token) VALUES (?,?,?,?,?,?)").bind(agentId,"EVALUATION",eventId,eventDetails,stamp,claimToken),
+      env.DB.prepare("UPDATE evolution_agents SET level=?, xp=?, cox_balance=cox_balance+?, total_predictions=?, correct_predictions=?, repeated_errors=?, updated_at=? WHERE agent_id=? AND EXISTS (SELECT 1 FROM evolution_events WHERE source_event_id=? AND claim_token=?)").bind(level,nextXp,individualReward,nextTotal,nextCorrect,repeatedErrors,stamp,agentId,eventId,claimToken)
     ];
-    if(individualReward>0) ops.push(env.DB.prepare("INSERT INTO evolution_rewards (agent_id,reward_type,amount,reason,created_at) VALUES (?,?,?,?,?)").bind(agentId,"INDIVIDUAL",individualReward,"Meta validada: mínimo 20 previsões, acurácia >=70% e zero erros repetidos.",stamp));
-    await env.DB.batch(ops);
+    if(individualReward>0) ops.push(env.DB.prepare("INSERT INTO evolution_rewards (agent_id,reward_type,amount,reason,created_at) SELECT ?, 'INDIVIDUAL', ?, ?, ? WHERE EXISTS (SELECT 1 FROM evolution_events WHERE source_event_id=? AND claim_token=?)").bind(agentId,individualReward,"Meta validada: mínimo 20 previsões, acurácia >=70% e zero erros repetidos.",stamp,eventId,claimToken));
+    const batchResults=await env.DB.batch(ops);
+    if(Number(batchResults[0]?.meta?.changes||0)!==1) return jsonError(json,request,"DUPLICATE_EVENT","Este lote já foi processado; nenhuma recompensa foi repetida.",409);
     const collective=await env.DB.prepare("SELECT SUM(total_predictions) AS predictions,SUM(correct_predictions) AS correct FROM evolution_agents").first();
     const teamAccuracy=Number(collective?.predictions||0)>0?Number(collective.correct)/Number(collective.predictions):0;
     let collectiveReward=0;
