@@ -100,10 +100,14 @@ Aplicar em ordem, verificando que 0005 não tenha sido aplicada anteriormente so
 - Lock para o ciclo de race, e endpoint manual unificado ao executor.
 - Workers logs/traces com sampling.
 
+## Validação executada
+- GitHub Actions `Validate MR Micélio Prime`: **success** (Validate module syntax).
+- GitHub Actions `Validate MR TradLab ZERO engine`: **success** (Worker module syntax + whitespace).
+
 ## Não executado
 - Deploy Cloudflare.
 - Aplicação de migrations.
-- Testes unitários/integration.
+- Testes unitários/integration/runtime ou teste real de D1.
 - Verificação de secrets/rotacionar tokens.
 - Rate limiting/WAF.
 - Comparação de D1 reads/writes antes/depois.
