@@ -1,7 +1,7 @@
 # D1 optimization — evaluation batching
 
 ## Change
-The autonomous engine now closes due forecasts in D1 batches, then writes evaluation records and aggregates agent counters in batches. Batch size is 80 statements to remain below platform statement limits. Threshold adaptation remains unchanged in principle: minimum 10 recent outcomes, bounded adjustment, and no strategy replacement.
+The autonomous engine now closes due forecasts in D1 batches, then writes evaluation records and aggregates agent counters in batches. Forecast creation also aggregates per-agent counters and batches those updates. Batch size is 80 statements to remain below platform statement limits. Threshold adaptation remains unchanged in principle: minimum 10 recent outcomes, bounded adjustment, and no strategy replacement.
 
 Migration `0003_engine_evaluation_index.sql` adds an idempotent index for the adaptive-threshold query ordered by agent and newest evaluation ID.
 
