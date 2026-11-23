@@ -80,25 +80,55 @@ async function evaluateDue(db,symbol,candles) {
   const latest=candles.at(-1);
   const due=await db.prepare("SELECT id,agent_id,direction,entry_price,strategy FROM engine_forecasts WHERE symbol=? AND status='PENDING' AND target_open_time<=? LIMIT 500")
     .bind(symbol,latest.openTime).all();
-  let evaluated=0;
-  const touchedAgents=new Set();
-  for(const f of (due.results||[])) {
-    const gross=(latest.close-Number(f.entry_price))/Number(f.entry_price)*(f.direction==="BUY"?1:-1);
-    const net=gross-(2*FEE_PER_SIDE)-(2*SLIPPAGE_PER_SIDE);
-    const outcome=net>0?"WIN":"LOSS";
-    const updated=await db.prepare("UPDATE engine_forecasts SET status='CLOSED',exit_price=?,gross_return=?,net_return=?,outcome=?,evaluated_at=? WHERE id=? AND status='PENDING'")
-      .bind(latest.close,gross,net,outcome,nowIso(),f.id).run();
-    if(Number(updated.meta?.changes||0)===1) {
-      await db.prepare("INSERT OR IGNORE INTO engine_evaluations(forecast_id,agent_id,symbol,strategy,net_return,outcome,evaluated_at) VALUES (?,?,?,?,?,?,?)")
-        .bind(f.id,f.agent_id,symbol,f.strategy,net,outcome,nowIso()).run();
-      await db.prepare("UPDATE engine_agents SET closed_forecasts=closed_forecasts+1,wins=wins+?,losses=losses+?,net_return_sum=net_return_sum+?,updated_at=? WHERE agent_id=?")
-        .bind(outcome==="WIN"?1:0,outcome==="LOSS"?1:0,net,nowIso(),f.agent_id).run();
-      touchedAgents.add(f.agent_id);
-      evaluated++;
+  const forecasts=(due.results||[]).filter(f=>Number.isFinite(Number(f.entry_price))&&Number(f.entry_price)>0);
+  if(!forecasts.length) return 0;
+
+  // D1 batches are capped; chunking keeps the cycle below the platform limit
+  // and avoids one network round-trip per forecast.
+  const chunkSize=80;
+  const closed=[];
+  for(let i=0;i<forecasts.length;i+=chunkSize) {
+    const chunk=forecasts.slice(i,i+chunkSize);
+    const statements=chunk.map(f=>{
+      const gross=(latest.close-Number(f.entry_price))/Number(f.entry_price)*(f.direction==="BUY"?1:-1);
+      const net=gross-(2*FEE_PER_SIDE)-(2*SLIPPAGE_PER_SIDE);
+      const outcome=net>0?"WIN":"LOSS";
+      return {
+        forecast:f,
+        gross,
+        net,
+        outcome,
+        statement:db.prepare("UPDATE engine_forecasts SET status='CLOSED',exit_price=?,gross_return=?,net_return=?,outcome=?,evaluated_at=? WHERE id=? AND status='PENDING'")
+          .bind(latest.close,gross,net,outcome,nowIso(),f.id)
+      };
+    });
+    const results=await db.batch(statements.map(x=>x.statement));
+    for(let j=0;j<statements.length;j++) {
+      if(Number(results[j]?.meta?.changes||0)===1) closed.push(statements[j]);
     }
   }
-  // Ajuste gradual de sensibilidade somente após amostra mínima; não troca a especialidade do agente.
-  for (const agentId of touchedAgents) {
+  if(!closed.length) return 0;
+
+  const evalStatements=closed.map(x=>db.prepare("INSERT OR IGNORE INTO engine_evaluations(forecast_id,agent_id,symbol,strategy,net_return,outcome,evaluated_at) VALUES (?,?,?,?,?,?,?)")
+    .bind(x.forecast.id,x.forecast.agent_id,symbol,x.forecast.strategy,x.net,x.outcome,nowIso()));
+  for(let i=0;i<evalStatements.length;i+=chunkSize) await db.batch(evalStatements.slice(i,i+chunkSize));
+
+  const byAgent=new Map();
+  for(const x of closed) {
+    const id=x.forecast.agent_id;
+    const agg=byAgent.get(id)||{wins:0,losses:0,net:0};
+    agg.wins+=x.outcome==="WIN"?1:0;
+    agg.losses+=x.outcome==="LOSS"?1:0;
+    agg.net+=x.net;
+    byAgent.set(id,agg);
+  }
+  const agentUpdates=[...byAgent].map(([agentId,agg])=>db.prepare("UPDATE engine_agents SET closed_forecasts=closed_forecasts+?,wins=wins+?,losses=losses+?,net_return_sum=net_return_sum+?,updated_at=? WHERE agent_id=?")
+    .bind(agg.wins+agg.losses,agg.wins,agg.losses,agg.net,nowIso(),agentId));
+  for(let i=0;i<agentUpdates.length;i+=chunkSize) await db.batch(agentUpdates.slice(i,i+chunkSize));
+
+  // Adaptive threshold remains conservative: only after >=10 recent evaluations,
+  // and strategy archetypes are never swapped automatically.
+  for(const agentId of byAgent.keys()) {
     const recent=await db.prepare("SELECT net_return FROM engine_evaluations WHERE agent_id=? ORDER BY id DESC LIMIT 20").bind(agentId).all();
     const values=(recent.results||[]).map(x=>Number(x.net_return)).filter(Number.isFinite);
     if(values.length<10) continue;
@@ -109,9 +139,8 @@ async function evaluateDue(db,symbol,candles) {
     await db.prepare("UPDATE engine_agents SET threshold=?,last_adapted_at=?,updated_at=? WHERE agent_id=?")
       .bind(next,nowIso(),nowIso(),agentId).run();
   }
-  return evaluated;
+  return closed.length;
 }
-
 async function createForecasts(db,symbol,candles) {
   const f=features(candles), candle=candles.at(-1), target=candle.openTime+HORIZON_MINUTES*60000;
   const batch=[];
