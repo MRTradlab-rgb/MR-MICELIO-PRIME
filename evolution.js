@@ -50,7 +50,8 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
     const accuracy=correct/predictions;
     const improvement=existing.total_predictions>0 ? accuracy-(existing.correct_predictions/Math.max(1,existing.total_predictions)) : 0;
     const qualified=predictions>=20;
-    const individualReward=qualified && accuracy>=0.70 && repeatedErrors===0 && riskPassed && outOfSample ? (improvement>=0.03?25:10) : 0;
+    const rewardsEnabled=env.EVOLUTION_REWARDS_ENABLED==="true";
+    const individualReward=rewardsEnabled && qualified && accuracy>=0.70 && repeatedErrors===0 && riskPassed && outOfSample ? (improvement>=0.03?25:10) : 0;
     const stamp=now();
     const nextTotal=Number(existing.total_predictions)+predictions;
     const nextCorrect=Number(existing.correct_predictions)+correct;
@@ -69,7 +70,7 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
     const collective=await env.DB.prepare("SELECT SUM(total_predictions) AS predictions,SUM(correct_predictions) AS correct FROM evolution_agents").first();
     const teamAccuracy=Number(collective?.predictions||0)>0?Number(collective.correct)/Number(collective.predictions):0;
     let collectiveReward=0;
-    if(Number(collective?.predictions||0)>=500 && teamAccuracy>=0.70){
+    if(rewardsEnabled && Number(collective?.predictions||0)>=500 && teamAccuracy>=0.70){
       const rewardDay=stamp.slice(0,10),claimToken=crypto.randomUUID();
       const claimOps=[
         env.DB.prepare("INSERT OR IGNORE INTO evolution_collective_claims(reward_day,claim_token,claimed_at) VALUES(?,?,?)").bind(rewardDay,claimToken,stamp),
@@ -79,7 +80,7 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
       const claimed=await env.DB.batch(claimOps);
       if(Number(claimed[0]?.meta?.changes||0)===1) collectiveReward=5;
     }
-    return json({ok:true,agentId,accuracy:Number((accuracy*100).toFixed(2)),qualified,individualReward,xpGained:xp,newLevel:level,collectiveAccuracy:Number((teamAccuracy*100).toFixed(2)),collectiveRewardPerAgent:collectiveReward,warning:"Recompensas exigem lote auditável, risco aprovado e validação fora da amostra. O servidor ainda depende de um produtor confiável de métricas."},200,request);
+    return json({ok:true,agentId,accuracy:Number((accuracy*100).toFixed(2)),qualified,individualReward,xpGained:xp,newLevel:level,collectiveAccuracy:Number((teamAccuracy*100).toFixed(2)),collectiveRewardPerAgent:collectiveReward,warning:rewardsEnabled?"Recompensas exigem lote auditável, risco aprovado e validação fora da amostra. O servidor ainda depende de um produtor confiável de métricas.":"Recompensas COX estão desativadas por padrão até existir produtor de métricas confiável e validação independente."},200,request);
   }
   return json({ok:false,error:"NOT_FOUND",endpoints:["GET /evolution","POST /evolution/seed","POST /evolution/evaluate"]},404,request);
 }
