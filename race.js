@@ -42,7 +42,7 @@ async function fetchLiveQuotes(env){
   if(!response.ok||!payload?.ok) throw Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
   return payload;
 }
-export async function runRaceCycle(env,suppliedFeed=null,options={}){
+async function runRaceCycleUnlocked(env,suppliedFeed=null,options={}){
   if(!env?.DB) throw Error("D1_BINDING_MISSING");
   await seed(env.DB);
   const quotes={},errors=[];
@@ -77,6 +77,14 @@ export async function runRaceCycle(env,suppliedFeed=null,options={}){
   return {ok:true,mode:"PAPER_ONLY",source:"BINANCE_WEBSOCKET",feedConnected:feed.connected,feedLastMessageAt:feed.lastMessageAt,quoteCount:valid.length,quoteErrors:errors,gemmaError:ge,decisions:{gemma:gd,micelio:md},gemmaError:ge,micelioError:me,executions:exec,wallets:await state(env.DB)};
 }
 
+export async function runRaceCycle(env,suppliedFeed=null,options={}) {
+  if(!env?.DB) throw Error("D1_BINDING_MISSING");
+  const owner=crypto.randomUUID(),now=Date.now(),expires=now+2*60*1000;
+  const lock=await env.DB.prepare("INSERT INTO race_cycle_lock(lock_id,owner_token,lock_until_ms) VALUES(1,?,?) ON CONFLICT(lock_id) DO UPDATE SET owner_token=excluded.owner_token,lock_until_ms=excluded.lock_until_ms WHERE race_cycle_lock.lock_until_ms<?").bind(owner,expires,now).run();
+  if(Number(lock.meta?.changes||0)!==1) return {ok:true,skipped:true,reason:"RACE_CYCLE_LOCKED",mode:"PAPER_ONLY"};
+  try { return await runRaceCycleUnlocked(env,suppliedFeed,options); }
+  finally { await env.DB.prepare("UPDATE race_cycle_lock SET lock_until_ms=0 WHERE lock_id=1 AND owner_token=?").bind(owner).run(); }
+}
 export async function handleRace(request,env,url,json){
  if(request.method==="GET"&&url.pathname==="/race/public-status"){
   if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);
@@ -91,4 +99,14 @@ export async function handleRace(request,env,url,json){
   }catch(e){return json({ok:false,error:"RACE_STATUS_UNAVAILABLE",detail:String(e?.message||e).slice(0,160)},503,request);}
  }
  if(!env.ENGINE_ADMIN_TOKEN||request.headers.get("Authorization")!==`Bearer ${env.ENGINE_ADMIN_TOKEN}`)return json({ok:false,error:"UNAUTHORIZED"},401,request);
- if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);await seed(env.DB);if(request.method==="GET"&&url.pathname==="/race/status")return json({ok:true,...await state(env.DB)},200,request);if(request.method==="POST"&&url.pathname==="/race/snapshot"){let b;try{b=await request.json();}catch{return json({ok:false,error:"INVALID_JSON"},400,request);}const q={};for(const [s,v] of Object.entries(b?.quotes||{})){const p=Number(v?.price),ts=Number(v?.timestamp);if(ALLOWED.has(s)&&p>0&&Number.isFinite(p)&&Number.isFinite(ts)&&Math.abs(Date.now()-ts)<=15000)q[s]={price:p,timestamp:ts};}if(!Object.keys(q).length)return json({ok:false,error:"NO_FRESH_QUOTES",maxAgeMs:15000},422,request);const last=await env.DB.prepare("SELECT created_at FROM race_cycles ORDER BY id DESC LIMIT 1").first();if(last&&Date.now()-Date.parse(last.created_at)<20000)return json({ok:true,skipped:true,reason:"CYCLE_THROTTLED",...await state(env.DB)},200,request);const t=now();await env.DB.prepare("INSERT INTO race_cycles(created_at,quote_count,quotes_json,status) VALUES(?,?,?,?)").bind(t,Object.keys(q).length,JSON.stringify(q),"PROCESSING").run();const pos=await env.DB.prepare("SELECT symbol,quantity,entry_price FROM race_positions WHERE wallet_id='GEMMA'").all();let gd=[],ge=null;try{gd=await gemma(env,q,pos.results||[]);}catch(e){ge=String(e.message||e).slice(0,180);}const md=await micelio(env.DB,q),exec=[];for(const [wallet,list] of [["GEMMA",gd],["MICELIO",md]])for(const d of list)if(Number(d.confidence||0)>=.35&&q[d.symbol])exec.push({wallet,...d,execution:await trade(env.DB,wallet,d.symbol,d.action,q[d.symbol].price,d.reason)});await env.DB.prepare("UPDATE race_cycles SET status=? WHERE id=(SELECT MAX(id) FROM race_cycles)").bind(ge?"PARTIAL":"COMPLETED").run();return json({ok:true,mode:"PAPER_ONLY",quoteCount:Object.keys(q).length,gemmaError:ge,decisions:{gemma:gd,micelio:md},executions:exec,wallets:await state(env.DB)},200,request);}return json({ok:false,error:"NOT_FOUND",endpoints:["GET /race/status","POST /race/snapshot"]},404,request);}
+ if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);await seed(env.DB);if(request.method==="GET"&&url.pathname==="/race/status")return json({ok:true,...await state(env.DB)},200,request);if(request.method==="POST"&&url.pathname==="/race/snapshot"){
+  let b;try{b=await request.json();}catch{return json({ok:false,error:"INVALID_JSON"},400,request);}
+  const q={};
+  for(const [s,v] of Object.entries(b?.quotes||{})){
+    const p=Number(v?.price),ts=Number(v?.timestamp);
+    if(ALLOWED.has(s)&&p>0&&Number.isFinite(p)&&Number.isFinite(ts)&&Math.abs(Date.now()-ts)<=15000)q[s]={price:p,timestamp:ts};
+  }
+  if(!Object.keys(q).length)return json({ok:false,error:"NO_FRESH_QUOTES",maxAgeMs:15000},422,request);
+  const result=await runRaceCycle(env,{ok:true,quotes:q,staleSymbols:[],connected:false,lastMessageAt:null},{micelioOnly:false});
+  return json(result,200,request);
+}return json({ok:false,error:"NOT_FOUND",endpoints:["GET /race/status","POST /race/snapshot"]},404,request);}
