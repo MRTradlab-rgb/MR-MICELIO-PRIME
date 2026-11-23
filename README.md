@@ -47,4 +47,8 @@ Project-level skills are stored in `.agents/skills/` and are available to compat
 - `d1-cost-optimization`: D1 query/index/batching and preservation of historical learning data.
 - `security-review`: endpoint, secrets, CORS, AI action allowlist, and abuse-control review.
 
-See `D1_OPTIMIZATION.md` and migration `0003_engine_evaluation_index.sql` for the evaluation-cycle optimization. Apply migration 0003 to the existing D1 database before relying on the new index.
+See `D1_OPTIMIZATION.md` and migration `0005_engine_evaluation_index.sql` for the evaluation-cycle optimization. Apply migration 0005 to the existing D1 database before relying on the new index.
+
+
+## Security and operations audit (2026-11-23)
+See `SECURITY_D1_AUDIT.md` for findings, evidence, fixes, and deployment prerequisites. Audit hardening is isolated in branch `audit-hardening`; no deployment was performed.
