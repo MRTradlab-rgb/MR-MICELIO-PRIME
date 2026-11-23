@@ -20,3 +20,8 @@ class_name = "BinanceMarketFeed"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["BinanceMarketFeed"]
+
+# Production environment variables / secrets (set in Cloudflare dashboard or Wrangler):
+# CORS_ALLOWED_ORIGINS = "https://your-frontend.example,https://another.example"
+# EVOLUTION_REWARDS_ENABLED = "false" (default; set true only after trusted metrics validation)
+# Secrets: ENGINE_ADMIN_TOKEN and EVOLUTION_ADMIN_TOKEN (never commit values)
