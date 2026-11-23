@@ -63,9 +63,9 @@ Revisão estática de `worker.js`, `engine.js`, `evolution.js`, `race.js`, `mark
 **Risco:** custo de D1/DO e exposição de métricas públicas. Os endpoints não expõem segredos, mas não há rate limit.
 **Correção:** /market aceita somente GET e três paths exatos; paths desconhecidos não iniciam conexão. Rate limiting e decisão sobre endpoints públicos ainda pendentes.
 
-### P2 — Race cycle throttle não é um lock transacional
-**Evidência:** `race.js` consulta o último ciclo e depois insere; em concorrência, duas chamadas podem passar pelo throttle. Atualização do ciclo usa `MAX(id)`.
-**Status:** não corrigido nesta branch; o endpoint de snapshot é admin-only e Cron é a principal chamada. Recomenda-se lock/ID explícito antes de ativar chamadas manuais simultâneas.
+### P1 — Race cycle podia sobrepor chamadas e duplicar trades virtuais
+**Evidência:** `race.js` consulta o último ciclo e depois insere; duas chamadas concorrentes podiam passar pelo throttle e executar BUY/SELL; o endpoint manual duplicava a lógica.
+**Correção:** lock D1 com token e expiração de 2 minutos, migration `0008_race_cycle_lock.sql`; o endpoint manual agora usa o mesmo executor/lock do ciclo programado.
 
 ### P2 — Reconnect/feed e snapshot
 **Evidência:** DO mantém até 100 candles por símbolo, o que limita o estado em memória/storage; snapshot só devolve quotes com idade <=15s. Engine valida candles até 3 minutos.
@@ -76,6 +76,7 @@ A base já contém `0003_prime_orchestration.sql` e `0004_paper_race.sql`. A mig
 - `0005_engine_evaluation_index.sql`
 - `0006_engine_tick_lock.sql`
 - `0007_evolution_idempotency.sql`
+- `0008_race_cycle_lock.sql`
 
 Aplicar em ordem, verificando que 0005 não tenha sido aplicada anteriormente sob outro nome. A migration 0007 usa `ALTER TABLE ... ADD COLUMN`; verificar se foi aplicada antes de repetir.
 
@@ -91,6 +92,7 @@ Aplicar em ordem, verificando que 0005 não tenha sido aplicada anteriormente so
 - Recompensas COX disabled by default.
 - Race seed e engine/evolution seed com fast-path.
 - Backoff de WebSocket e catch explícito de persistência.
+- Lock para o ciclo de race, e endpoint manual unificado ao executor.
 - Workers logs/traces com sampling.
 
 ## Não executado
