@@ -157,13 +157,16 @@ async function createForecasts(db,symbol,candles) {
   }
   if(batch.length) {
     const inserted=await db.batch(batch);
+    const countsByAgent=new Map();
     for(let i=0;i<inserted.length;i++) {
-      if(Number(inserted[i].meta?.changes||0)===1) {
+      if(Number(inserted[i]?.meta?.changes||0)===1) {
         created++;
         const agentId=forecastAgents[i];
-        await db.prepare("UPDATE engine_agents SET total_forecasts=total_forecasts+1,updated_at=? WHERE agent_id=?").bind(nowIso(),agentId).run();
+        countsByAgent.set(agentId,(countsByAgent.get(agentId)||0)+1);
       }
     }
+    const updates=[...countsByAgent].map(([agentId,count])=>db.prepare("UPDATE engine_agents SET total_forecasts=total_forecasts+?,updated_at=? WHERE agent_id=?").bind(count,nowIso(),agentId));
+    for(let i=0;i<updates.length;i+=80) await db.batch(updates.slice(i,i+80));
   }
   return {created,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
 }
