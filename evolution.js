@@ -70,14 +70,14 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
     const teamAccuracy=Number(collective?.predictions||0)>0?Number(collective.correct)/Number(collective.predictions):0;
     let collectiveReward=0;
     if(Number(collective?.predictions||0)>=500 && teamAccuracy>=0.70){
-      const last=await env.DB.prepare("SELECT created_at FROM evolution_rewards WHERE reward_type='COLLECTIVE' ORDER BY id DESC LIMIT 1").first();
-      if(!last || Date.now()-Date.parse(last.created_at)>86400000){
-        collectiveReward=5;
-        await env.DB.batch([
-          env.DB.prepare("UPDATE evolution_agents SET cox_balance=cox_balance+?, updated_at=?").bind(collectiveReward,stamp),
-          env.DB.prepare("INSERT INTO evolution_rewards (agent_id,reward_type,amount,reason,created_at) VALUES (NULL,'COLLECTIVE',?,'Meta coletiva: pelo menos 500 previsões e acurácia agregada >=70%.',?)").bind(collectiveReward*50,stamp)
-        ]);
-      }
+      const rewardDay=stamp.slice(0,10),claimToken=crypto.randomUUID();
+      const claimOps=[
+        env.DB.prepare("INSERT OR IGNORE INTO evolution_collective_claims(reward_day,claim_token,claimed_at) VALUES(?,?,?)").bind(rewardDay,claimToken,stamp),
+        env.DB.prepare("UPDATE evolution_agents SET cox_balance=cox_balance+?,updated_at=? WHERE EXISTS (SELECT 1 FROM evolution_collective_claims WHERE reward_day=? AND claim_token=?)").bind(5,stamp,rewardDay,claimToken),
+        env.DB.prepare("INSERT INTO evolution_rewards(agent_id,reward_type,amount,reason,created_at) SELECT NULL,'COLLECTIVE',?,'Meta coletiva: pelo menos 500 previsões e acurácia agregada >=70%.',? WHERE EXISTS (SELECT 1 FROM evolution_collective_claims WHERE reward_day=? AND claim_token=?)").bind(250,stamp,rewardDay,claimToken)
+      ];
+      const claimed=await env.DB.batch(claimOps);
+      if(Number(claimed[0]?.meta?.changes||0)===1) collectiveReward=5;
     }
     return json({ok:true,agentId,accuracy:Number((accuracy*100).toFixed(2)),qualified,individualReward,xpGained:xp,newLevel:level,collectiveAccuracy:Number((teamAccuracy*100).toFixed(2)),collectiveRewardPerAgent:collectiveReward,warning:"Recompensas exigem lote auditável, risco aprovado e validação fora da amostra. O servidor ainda depende de um produtor confiável de métricas."},200,request);
   }
