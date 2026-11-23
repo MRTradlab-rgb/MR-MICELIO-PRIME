@@ -36,3 +36,15 @@ O repositório está preparado para Cloudflare Workers Builds:
 ## Motor autônomo MR TradLab ZERO
 
 A branch feature/zero-autonomous-50-agents adiciona um motor de simulação contínua com 50 agentes, candles públicos Binance de 1 minuto, previsões avaliadas após 3 minutos, persistência D1 e Cron a cada minuto. A fase é exclusivamente PAPER_ONLY: não há endpoint de ordens, leitura de carteira ou chaves privadas. Consulte ZERO_ENGINE_SETUP.md para ativação e limites.
+
+
+## Agent Skills (installed in this repository)
+
+Project-level skills are stored in `.agents/skills/` and are available to compatible coding agents:
+- `workers-best-practices`: official Cloudflare Workers production guidance.
+- `wrangler`: official Wrangler operations/deployment guidance.
+- `micelio-trading-review`: trading simulation, strategy validation, and risk review guardrails.
+- `d1-cost-optimization`: D1 query/index/batching and preservation of historical learning data.
+- `security-review`: endpoint, secrets, CORS, AI action allowlist, and abuse-control review.
+
+See `D1_OPTIMIZATION.md` and migration `0005_engine_evaluation_index.sql` for the evaluation-cycle optimization. Apply migration 0005 to the existing D1 database before relying on the new index.
