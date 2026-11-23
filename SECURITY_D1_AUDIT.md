@@ -47,6 +47,10 @@ Revisão estática de `worker.js`, `engine.js`, `evolution.js`, `race.js`, `mark
 **Evidência anterior:** os counters eram agregados a partir de forecasts fechados mesmo se INSERT OR IGNORE da avaliação não criasse registro.
 **Correção:** estatísticas e adaptação agora usam somente as avaliações cujo insert efetivamente reportou mudança.
 
+### P2 — Evolution: concorrência podia perder incrementos
+**Evidência anterior:** updates escreviam valores absolutos de XP/previsões calculados de uma leitura anterior.
+**Correção:** XP, total de previsões e corretas são incrementados atomicamente no SQL; level é recalculado a partir do XP atualizado.
+
 ### P2 — Durable Object reconexão fixa e promise sem catch
 **Evidência:** reconnect sempre após 60 s; persistClosedData chamada sem tratamento explícito de rejeição.
 **Correção:** backoff progressivo de 5, 10, 20, 40 até 60 s e promise de persistência com catch.
@@ -89,6 +93,7 @@ Aplicar em ordem, verificando que 0005 não tenha sido aplicada anteriormente so
 - D1 polling/queries e agregação de thresholds reduzidos.
 - Contadores baseados em avaliações realmente inseridas.
 - Idempotência de eventos/recompensas Evolution.
+- Contadores de Evolution com incrementos atômicos.
 - Recompensas COX disabled by default.
 - Race seed e engine/evolution seed com fast-path.
 - Backoff de WebSocket e catch explícito de persistência.
