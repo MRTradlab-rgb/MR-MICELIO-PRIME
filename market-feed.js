@@ -54,6 +54,11 @@ export class BinanceMarketFeed {
   async persist(){
     try{await this.ctx.storage.put("feed_state",{quotes:this.quotes,candles:this.candles,lastMessageAt:this.lastMessageAt,lastPersistAt:this.lastPersistAt,lastProcessedClose:this.lastProcessedClose,lastError:this.lastError,lastClose:this.lastClose,connectAttempts:this.connectAttempts});}catch(e){this.lastError="STORAGE_WRITE: "+String(e?.message||e);}
   }
+  scheduleReconnect(){
+    const attempt=Math.max(0,Number(this.connectAttempts||0)-1);
+    const delay=Math.min(60000,5000*Math.pow(2,Math.min(attempt,4)));
+    this.ctx.storage.setAlarm(now()+delay).catch(()=>{});
+  }
   async connect(){
     if(this.isOpen()||this.connecting)return;
     this.connecting=true;this.connectAttempts++;
@@ -81,7 +86,7 @@ export class BinanceMarketFeed {
                 this.candles[symbol]=list.sort((a,b)=>a.openTime-b.openTime).slice(-100);
                 this.quotes[symbol]={price:row.close,bid:row.close,ask:row.close,timestamp:now(),exchangeEventTime:row.closeTime,source:"BINANCE_WEBSOCKET_KLINE"};
                 this.dirty=true;
-                this.persistClosedData();
+                this.persistClosedData().catch(()=>{});
               }
             }
           }
@@ -91,7 +96,7 @@ export class BinanceMarketFeed {
       ws.addEventListener("close",event=>{
         this.connecting=false;this.socket=null;this.lastClose={code:event.code,reason:event.reason||"",at:now()};
         this.connectIndex=(this.connectIndex+1)%WS_URLS.length;
-        this.ctx.storage.setAlarm(now()+60000).catch(()=>{});
+        this.scheduleReconnect();
         this.persist();
         console.log("MR_ZERO_WS_CLOSE",JSON.stringify(this.lastClose));
       });
@@ -99,13 +104,13 @@ export class BinanceMarketFeed {
         this.lastError="BINANCE_WEBSOCKET_ERROR";
         this.connecting=false;
         try{ws.close();}catch{}
-        this.ctx.storage.setAlarm(now()+60000).catch(()=>{});
+        this.scheduleReconnect();
         this.persist();
       });
     }catch(e){
       this.connecting=false;this.socket=null;this.lastError="WEBSOCKET_CONSTRUCTOR: "+String(e?.stack||e?.message||e).slice(0,800);
       this.connectIndex=(this.connectIndex+1)%WS_URLS.length;
-      this.ctx.storage.setAlarm(now()+60000).catch(()=>{});
+      this.scheduleReconnect();
       await this.persist();
       console.log("MR_ZERO_WS_CONNECT_ERROR",this.lastError);
     }
