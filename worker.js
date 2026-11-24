@@ -37,8 +37,8 @@ async function readJsonBounded(request,maxBytes=32768) {
   for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.byteLength;}
   return JSON.parse(new TextDecoder().decode(data));
 }
-function json(data,status,request) {
-  return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=utf-8",...corsHeaders(request)}});
+function json(data,status,request,extraHeaders={}) {
+  return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=utf-8",...corsHeaders(request),...extraHeaders}});
 }
 function cleanActions(actions) {
   if (!Array.isArray(actions)) return [];
