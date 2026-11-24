@@ -25,6 +25,15 @@ new_sqlite_classes = ["BinanceMarketFeed"]
 # CORS_ALLOWED_ORIGINS = "https://your-frontend.example,https://another.example"
 # EVOLUTION_REWARDS_ENABLED = "false" (default; set true only after trusted metrics validation)
 # Secrets: ENGINE_ADMIN_TOKEN and EVOLUTION_ADMIN_TOKEN (never commit values)
+# Confirm this namespace ID is unique in the Cloudflare account before deploy.
+[[ratelimits]]
+name = "MR_API_RATE_LIMITER"
+namespace_id = "987654321"
+
+[ratelimits.simple]
+limit = 60
+period = 60
+
 
 [observability]
 enabled = true
