@@ -13,6 +13,15 @@ async function ensureAgents(db){
   ).bind(a.id,a.archetype,a.specialty,stamp,stamp)));
 }
 function jsonError(json,request,code,message,status=400){return json({ok:false,error:code,message},status,request);}
+async function readJsonBounded(request,maxBytes=16384){
+  const length=Number(request.headers.get("Content-Length")||0);
+  if(length>maxBytes)throw new Error("BODY_TOO_LARGE");
+  if(!request.body)return {};
+  const reader=request.body.getReader(),chunks=[];let total=0;
+  while(true){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>maxBytes){await reader.cancel();throw new Error("BODY_TOO_LARGE");}chunks.push(value);}
+  const data=new Uint8Array(total);let offset=0;for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.byteLength;}
+  return JSON.parse(new TextDecoder().decode(data));
+}
 export async function handleEvolution(request,env,url,corsHeaders,json){
   if(!env.DB) return json({ok:false,service:"MICELIO_EVOLUTION",status:"D1_NOT_CONFIGURED",message:"O módulo está no Worker, mas a persistência D1 ainda não está conectada."},503,request);
   if(request.method==="GET" && (url.pathname==="/evolution"||url.pathname==="/evolution/")){
@@ -24,7 +33,7 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
       env.DB.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(amount),0) AS amount FROM evolution_rewards").first()
     ]);
     const total=Number(summary?.predictions||0), correct=Number(summary?.correct||0);
-    return json({ok:true,service:"MICELIO_EVOLUTION",mode:"HYBRID",currency:"COX_VIRTUAL",summary:{...summary,accuracy:total?Number((correct/total*100).toFixed(2)):null,active_missions:Number(missions?.active||0),reward_events:Number(rewards?.total||0),rewarded_cox:Number(rewards?.amount||0)},agents:agents.results||[],rules:{individual:true,collective:true,real_money:false}},200,request);
+    return json({ok:true,service:"MICELIO_EVOLUTION",mode:"HYBRID",currency:"COX_VIRTUAL",summary:{...summary,accuracy:total?Number((correct/total*100).toFixed(2)):null,active_missions:Number(missions?.active||0),reward_events:Number(rewards?.total||0),rewarded_cox:Number(rewards?.amount||0)},agents:agents.results||[],rules:{individual:true,collective:true,real_money:false}},200,request,{"Cache-Control":"public, max-age=3"});
   }
   if(request.method==="POST" && url.pathname==="/evolution/seed"){
     const token=env.EVOLUTION_ADMIN_TOKEN;
@@ -35,7 +44,7 @@ export async function handleEvolution(request,env,url,corsHeaders,json){
   if(request.method==="POST" && url.pathname==="/evolution/evaluate"){
     const token=env.EVOLUTION_ADMIN_TOKEN;
     if(!token || request.headers.get("Authorization")!==`Bearer ${token}`) return jsonError(json,request,"UNAUTHORIZED","Autorização administrativa necessária.",401);
-    let body;try{body=await request.json();}catch{return jsonError(json,request,"INVALID_JSON","Envie JSON válido.");}
+    let body;try{body=await readJsonBounded(request,16384);}catch(e){return jsonError(json,request,e.message==="BODY_TOO_LARGE"?"BODY_TOO_LARGE":"INVALID_JSON",e.message==="BODY_TOO_LARGE"?"Payload acima de 16 KiB.":"Envie JSON válido.",e.message==="BODY_TOO_LARGE"?413:400);}
     const agentId=typeof body.agentId==="string"?body.agentId:"";
     const eventId=typeof body.eventId==="string"?body.eventId.trim().slice(0,100):"";
     const riskPassed=body.riskPassed===true;
