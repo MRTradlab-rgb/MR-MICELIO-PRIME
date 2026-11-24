@@ -18,7 +18,7 @@ Revisão estática de `worker.js`, `engine.js`, `evolution.js`, `race.js`, `mark
 ### P1 — Endpoints de processamento sem limite de payload nem rate limiting
 **Evidência:** `/chat`, `/evolution/evaluate` e `/race/snapshot` recebiam JSON sem limite de tamanho.
 **Risco:** payloads grandes e abuso podem elevar CPU, AI invocations e consumo.
-**Correção:** `/chat` tem limite streaming de 32 KiB; Evolution e Race têm limite de 16 KiB. Content-Length é verificado antecipadamente e o streaming é interrompido quando excede o limite. **Rate limiting ainda precisa ser configurado** (Cloudflare WAF/Rate Limiting ou binding com namespace confirmado).
+**Correção:** `/chat` tem limite streaming de 32 KiB; Evolution e Race têm limite de 16 KiB. Content-Length é verificado antecipadamente e o streaming é interrompido quando excede o limite. **Rate limiting implementado:** binding `MR_API_RATE_LIMITER` (60 unidades/60s por key/localidade); chat consome 5 unidades por requisição (aprox. 12/min), operações write/market 3 (aprox. 20/min), leituras 1 (60/min). O limite é aproximado, por localidade Cloudflare, não estrito. A chave usa IP; NATs compartilhados podem afetar usuários legítimos. Confirmar que `namespace_id=987654321` é único na conta e Wrangler >=4.36.0 antes do deploy.
 
 ### P1 — Tick do motor podia sobrepor Cron e chamadas manuais
 **Evidência:** `runAutonomousTick()` não tinha lock; Cron é `* * * * *` e endpoint manual existe.
@@ -65,7 +65,7 @@ Revisão estática de `worker.js`, `engine.js`, `evolution.js`, `race.js`, `mark
 ### P2 — Endpoints públicos de leitura e feed
 **Evidência:** `/engine/status`, `/engine/agents`, `/evolution`, `/race/public-status`, `/market/snapshot`, `/market/health` e `/market/connect` não exigem autenticação.
 **Risco:** custo de D1/DO e exposição de métricas públicas. Os endpoints não expõem segredos, mas não há rate limit.
-**Correção parcial:** respostas de status/ranking públicos têm cache curto de cliente (`Cache-Control: public, max-age=3`) para reduzir polling repetitivo. Isso não é cache garantido no edge e não substitui rate limiting. /market aceita somente GET e três paths exatos; paths desconhecidos não iniciam conexão.
+**Correção:** binding de rate limiting aplica quotas aproximadas; respostas de status/ranking públicos também têm cache curto de cliente (`Cache-Control: public, max-age=3`) para reduzir polling repetitivo. Isso não é cache garantido no edge. /market aceita somente GET e três paths exatos; paths desconhecidos não iniciam conexão.
 
 ### P1 — Race cycle podia sobrepor chamadas e duplicar trades virtuais
 **Evidência:** `race.js` consulta o último ciclo e depois insere; duas chamadas concorrentes podiam passar pelo throttle e executar BUY/SELL; o endpoint manual duplicava a lógica.
@@ -88,6 +88,7 @@ Aplicar em ordem, verificando que 0005 não tenha sido aplicada anteriormente so
 - CORS allowlist e bloqueio de origem não configurada.
 - Limite streaming de 32 KiB no `POST /chat` e 16 KiB nos payloads Evolution/Race.
 - Cache curto de cliente nos endpoints públicos de status/ranking.
+- Rate limit ponderado no Worker: chat 5 unidades, market/write 3, leitura 1, limite de 60 unidades por minuto/localidade.
 - Ações da IA protegidas por token administrativo.
 - Paths/métodos de Market Feed restritos.
 - Tick engine lock, concorrência de mercados limitada a 3.
@@ -111,6 +112,7 @@ Aplicar em ordem, verificando que 0005 não tenha sido aplicada anteriormente so
 - Testes unitários/integration/runtime ou teste real de D1.
 - Verificação de cache real do edge; os headers adicionados são cache de cliente.
 - Verificação de secrets/rotacionar tokens.
-- Rate limiting/WAF.
+- Verificação do namespace ID do Rate Limiting na conta Cloudflare.
+- Configuração adicional de WAF (opcional).
 - Comparação de D1 reads/writes antes/depois.
 - Confirmação do Cron ativo no dashboard.
