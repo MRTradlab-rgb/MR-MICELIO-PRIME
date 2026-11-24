@@ -37,6 +37,24 @@ async function readJsonBounded(request,maxBytes=32768) {
   for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.byteLength;}
   return JSON.parse(new TextDecoder().decode(data));
 }
+async function enforceRateLimit(request,env,url){
+  if(request.method==="OPTIONS"||url.pathname==="/"||url.pathname==="/health")return {allowed:true};
+  const limiter=env.MR_API_RATE_LIMITER;
+  if(!limiter)return {allowed:false,missing:true};
+  const path=url.pathname;
+  const client=request.headers.get("cf-connecting-ip")||"unknown";
+  let group="read",delta=1;
+  if(path==="/chat"){group="chat";delta=5;}
+  else if(path.startsWith("/market/")){group="market";delta=3;}
+  else if(request.method!=="GET"){group="write";delta=3;}
+  try{
+    const result=await limiter.limit({key:group+":"+client,delta});
+    return {allowed:Boolean(result?.success),group,delta};
+  }catch(error){
+    console.log("MR_API_RATE_LIMIT_ERROR",String(error?.message||error).slice(0,160));
+    return {allowed:false,error:true};
+  }
+}
 function json(data,status,request,extraHeaders={}) {
   return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=utf-8",...corsHeaders(request),...extraHeaders}});
 }
@@ -77,6 +95,12 @@ export default {
   if(!originAllowed(request,env)) return new Response("Origin not allowed",{status:403,headers:{"Vary":"Origin"}});
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
   const url=new URL(request.url);
+  const rate=await enforceRateLimit(request,env,url);
+  if(!rate.allowed){
+    if(rate.missing)return json({ok:false,error:"RATE_LIMIT_BINDING_MISSING"},503,request);
+    if(rate.error)return json({ok:false,error:"RATE_LIMIT_UNAVAILABLE"},503,request);
+    return json({ok:false,error:"RATE_LIMITED",group:rate.group},429,request,{"Retry-After":"60"});
+  }
   if(url.pathname.startsWith("/race")) return handleRace(request,env,url,json);
   if(url.pathname.startsWith("/market/")) {
     if(request.method!=="GET") return json({ok:false,error:"METHOD_NOT_ALLOWED"},405,request);
