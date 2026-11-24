@@ -1,3 +1,12 @@
+async function readJsonBounded(request,maxBytes=16384){
+  const length=Number(request.headers.get("Content-Length")||0);
+  if(length>maxBytes)throw new Error("BODY_TOO_LARGE");
+  if(!request.body)return {};
+  const reader=request.body.getReader(),chunks=[];let total=0;
+  while(true){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>maxBytes){await reader.cancel();throw new Error("BODY_TOO_LARGE");}chunks.push(value);}
+  const data=new Uint8Array(total);let offset=0;for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.byteLength;}
+  return JSON.parse(new TextDecoder().decode(data));
+}
 const START=10,FEE=.001,SLIP=.0005;
 const QUOTE_MAX_AGE_MS=15000;
 const QUOTE_TIMEOUT_MS=8000;
@@ -95,12 +104,12 @@ export async function handleRace(request,env,url,json){
     env.DB.prepare("SELECT id,wallet_id,symbol,side,quantity,price,fee,slippage,net_pnl,reason,created_at FROM race_trades ORDER BY id DESC LIMIT 30").all(),
     env.DB.prepare("SELECT id,created_at,quote_count,status FROM race_cycles ORDER BY id DESC LIMIT 10").all()
    ]);
-   return json({ok:true,mode:"PAPER_ONLY",realOrdersEnabled:false,wallets:wallets.results||[],positions:positions.results||[],recentTrades:trades.results||[],recentCycles:cycles.results||[]},200,request);
+   return json({ok:true,mode:"PAPER_ONLY",realOrdersEnabled:false,wallets:wallets.results||[],positions:positions.results||[],recentTrades:trades.results||[],recentCycles:cycles.results||[]},200,request,{"Cache-Control":"public, max-age=3"});
   }catch(e){return json({ok:false,error:"RACE_STATUS_UNAVAILABLE",detail:String(e?.message||e).slice(0,160)},503,request);}
  }
  if(!env.ENGINE_ADMIN_TOKEN||request.headers.get("Authorization")!==`Bearer ${env.ENGINE_ADMIN_TOKEN}`)return json({ok:false,error:"UNAUTHORIZED"},401,request);
  if(!env.DB)return json({ok:false,error:"D1_BINDING_MISSING"},503,request);await seed(env.DB);if(request.method==="GET"&&url.pathname==="/race/status")return json({ok:true,...await state(env.DB)},200,request);if(request.method==="POST"&&url.pathname==="/race/snapshot"){
-  let b;try{b=await request.json();}catch{return json({ok:false,error:"INVALID_JSON"},400,request);}
+  let b;try{b=await readJsonBounded(request,16384);}catch(e){return json({ok:false,error:e.message==="BODY_TOO_LARGE"?"BODY_TOO_LARGE":"INVALID_JSON"},e.message==="BODY_TOO_LARGE"?413:400,request);}
   const q={};
   for(const [s,v] of Object.entries(b?.quotes||{})){
     const p=Number(v?.price),ts=Number(v?.timestamp);
