@@ -7,7 +7,7 @@ import { handleEvolution } from "./evolution.js";
 // Durable Object feed retained only for legacy/manual endpoints; the autonomous Cron no longer uses it.
 import { BinanceMarketFeed } from "./market-feed.js";
 export { BinanceMarketFeed };
-import { handleRace, runRaceCycle } from "./race.js";
+import { handleRace } from "./race.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const MARKET_SYMBOLS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT"];
@@ -131,8 +131,7 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
     return;
    }
    const engine=await runAutonomousTick(env,feed.candles).catch(err=>({ok:false,error:String(err&&err.message||err)}));
-   const race=await runRaceCycle(env,feed,{micelioOnly:true}).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
-   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({source:feed.source,engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
+   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({source:feed.source,engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,forecastsCreated:engine?.results?.reduce((n,x)=>n+(x.forecastsCreated||0),0)||0,forecastsEvaluated:engine?.results?.reduce((n,x)=>n+(x.evaluated||0),0)||0,errors:engine?.errors||[],raceMode:"PAUSED_TO_PRIORITIZE_AGENT_TRAINING"}));
   })());
  }
 };
