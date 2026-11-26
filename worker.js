@@ -4,11 +4,28 @@
  * Required binding: AI (Workers AI)
  */
 import { handleEvolution } from "./evolution.js";
+// Durable Object feed retained only for legacy/manual endpoints; the autonomous Cron no longer uses it.
 import { BinanceMarketFeed } from "./market-feed.js";
 export { BinanceMarketFeed };
 import { handleRace, runRaceCycle } from "./race.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
+const MARKET_SYMBOLS=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT"];
+async function fetchBinanceRestMarket(){
+ const entries=await Promise.all(MARKET_SYMBOLS.map(async symbol=>{
+  const url="https://api.binance.com/api/v3/klines?symbol="+symbol+"&interval=1m&limit=100";
+  const response=await fetch(url,{headers:{"Accept":"application/json"}});
+  if(!response.ok)throw new Error("BINANCE_REST_"+symbol+"_HTTP_"+response.status);
+  const rows=await response.json();
+  if(!Array.isArray(rows)||rows.length<26)throw new Error("BINANCE_REST_INSUFFICIENT_CANDLES_"+symbol);
+  const candles=rows.map(k=>({openTime:Number(k[0]),open:Number(k[1]),high:Number(k[2]),low:Number(k[3]),close:Number(k[4]),volume:Number(k[5]),closeTime:Number(k[6])}));
+  const last=rows[rows.length-1];
+  return [symbol,{candles,quote:{price:Number(last[4]),bid:Number(last[4]),ask:Number(last[4]),timestamp:Date.now(),exchangeEventTime:Number(last[6]),source:"BINANCE_REST_1M"}}];
+ }));
+ const candles={},quotes={};
+ for(const [symbol,data] of entries){candles[symbol]=data.candles;quotes[symbol]=data.quote;}
+ return {ok:true,source:"BINANCE_REST_1M",connected:false,quotes,candles,staleSymbols:[]};
+}
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
 function corsHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
@@ -104,25 +121,18 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
  },
  async scheduled(controller,env,ctx) {
   ctx.waitUntil((async()=>{
-   let feed=null;
+   let feed;
    try {
-    if(!env.MARKET_FEED) throw new Error("MARKET_FEED_BINDING_MISSING");
-    const id=env.MARKET_FEED.idFromName("binance-global");
-    const stub=env.MARKET_FEED.get(id);
-    const response=await stub.fetch("https://market-feed/snapshot");
-    feed=await response.json();
-    if(!response.ok||!feed?.ok) throw new Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
+    feed=await fetchBinanceRestMarket();
    } catch(e) {
     const message=String(e&&e.message||e);
-    console.log("MR_ZERO_FEED_SNAPSHOT_ERROR",message);
-    const engine={ok:false,error:message};
-    const race={ok:false,mode:"PAPER_ONLY",error:message,quoteCount:0};
-    console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:false,raceOk:false,quoteCount:0,raceError:message}));
+    console.log("MR_ZERO_BINANCE_REST_ERROR",message);
+    console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({source:"BINANCE_REST_1M",engineOk:false,raceOk:false,error:message}));
     return;
    }
-   const engine=await runAutonomousTick(env,feed.candles||{}).catch(err=>({ok:false,error:String(err&&err.message||err)}));
+   const engine=await runAutonomousTick(env,feed.candles).catch(err=>({ok:false,error:String(err&&err.message||err)}));
    const race=await runRaceCycle(env,feed,{micelioOnly:true}).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
-   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
+   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({source:feed.source,engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
   })());
  }
 };
