@@ -4,15 +4,59 @@
  * Required binding: AI (Workers AI)
  */
 import { handleEvolution } from "./evolution.js";
+import { BinanceMarketFeed } from "./market-feed.js";
+export { BinanceMarketFeed };
+import { handleRace, runRaceCycle } from "./race.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
 function corsHeaders(request) {
-  const origin = request.headers.get("Origin") || "*";
-  return {"Access-Control-Allow-Origin":origin,"Vary":"Origin","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400"};
+  const origin = request.headers.get("Origin");
+  const headers={"Vary":"Origin","Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400"};
+  if(origin) headers["Access-Control-Allow-Origin"]=origin;
+  return headers;
 }
-function json(data,status,request) {
-  return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=utf-8",...corsHeaders(request)}});
+function originAllowed(request,env) {
+  const origin=request.headers.get("Origin");
+  if(!origin) return true;
+  const configured=String(env.CORS_ALLOWED_ORIGINS||"").split(",").map(x=>x.trim()).filter(Boolean);
+  return configured.includes(origin)||configured.includes("*");
+}
+async function readJsonBounded(request,maxBytes=32768) {
+  const length=Number(request.headers.get("Content-Length")||0);
+  if(length>maxBytes) throw new Error("BODY_TOO_LARGE");
+  if(!request.body) return {};
+  const reader=request.body.getReader(), chunks=[]; let total=0;
+  while(true) {
+    const {done,value}=await reader.read(); if(done) break;
+    total+=value.byteLength;
+    if(total>maxBytes){await reader.cancel();throw new Error("BODY_TOO_LARGE");}
+    chunks.push(value);
+  }
+  const data=new Uint8Array(total);let offset=0;
+  for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.byteLength;}
+  return JSON.parse(new TextDecoder().decode(data));
+}
+async function enforceRateLimit(request,env,url){
+  if(request.method==="OPTIONS"||url.pathname==="/"||url.pathname==="/health")return {allowed:true};
+  const limiter=env.MR_API_RATE_LIMITER;
+  if(!limiter)return {allowed:false,missing:true};
+  const path=url.pathname;
+  const client=request.headers.get("cf-connecting-ip")||"unknown";
+  let group="read",delta=1;
+  if(path==="/chat"){group="chat";delta=5;}
+  else if(path.startsWith("/market/")){group="market";delta=3;}
+  else if(request.method!=="GET"){group="write";delta=3;}
+  try{
+    const result=await limiter.limit({key:group+":"+client,delta});
+    return {allowed:Boolean(result?.success),group,delta};
+  }catch(error){
+    console.log("MR_API_RATE_LIMIT_ERROR",String(error?.message||error).slice(0,160));
+    return {allowed:false,error:true};
+  }
+}
+function json(data,status,request,extraHeaders={}) {
+  return new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json; charset=utf-8",...corsHeaders(request),...extraHeaders}});
 }
 function cleanActions(actions) {
   if (!Array.isArray(actions)) return [];
@@ -48,15 +92,38 @@ function parseModelOutput(result) {
 }
 export default {
  async fetch(request,env) {
+  if(!originAllowed(request,env)) return new Response("Origin not allowed",{status:403,headers:{"Vary":"Origin"}});
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
   const url=new URL(request.url);
+  const rate=await enforceRateLimit(request,env,url);
+  if(!rate.allowed){
+    if(rate.missing)return json({ok:false,error:"RATE_LIMIT_BINDING_MISSING"},503,request);
+    if(rate.error)return json({ok:false,error:"RATE_LIMIT_UNAVAILABLE"},503,request);
+    return json({ok:false,error:"RATE_LIMITED",group:rate.group},429,request,{"Retry-After":"60"});
+  }
+  if(url.pathname.startsWith("/race")) return handleRace(request,env,url,json);
+  if(url.pathname.startsWith("/market/")) {
+    if(request.method!=="GET") return json({ok:false,error:"METHOD_NOT_ALLOWED"},405,request);
+    const routes={"/market/snapshot":"/snapshot","/market/health":"/health","/market/connect":"/connect"};
+    const path=routes[url.pathname];
+    if(!path) return json({ok:false,error:"NOT_FOUND"},404,request);
+    if(!env.MARKET_FEED) return json({ok:false,error:"MARKET_FEED_BINDING_MISSING"},503,request);
+    try {
+      const id=env.MARKET_FEED.idFromName("binance-global"),stub=env.MARKET_FEED.get(id);
+      const result=await stub.fetch("https://market-feed"+path);
+      return new Response(result.body,{status:result.status,headers:{"Content-Type":"application/json","Cache-Control":"no-store",...corsHeaders(request)}});
+    } catch(e) {
+      console.log("MR_ZERO_MARKET_ROUTE_ERROR",String(e&&e.message||e));
+      return json({ok:false,error:"MARKET_FEED_DO_EXCEPTION"},502,request);
+    }
+  }
   if(url.pathname.startsWith("/engine")) return handleEngine(request,env,url,json);
   if(url.pathname.startsWith("/evolution")) return handleEvolution(request,env,url,corsHeaders,json);
   if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat","GET /engine/status","GET /engine/agents","POST /engine/seed","POST /engine/tick"],health:"/health"},200,request);
   if(request.method==="GET"&&url.pathname==="/health") return json({ok:true,service:"MR Micelio Prime",model:MODEL,aiBinding:Boolean(env.AI),status:env.AI?"READY":"MISSING_AI_BINDING"},env.AI?200:503,request);
   if(request.method!=="POST"||url.pathname!=="/chat") return json({ok:false,error:"Use GET /health or POST /chat"},404,request);
   if(!env.AI) return json({ok:false,error:"Workers AI binding 'AI' is not configured."},503,request);
-  let body; try {body=await request.json();} catch {return json({ok:false,error:"Invalid JSON body."},400,request);}
+  let body; try {body=await readJsonBounded(request,32768);} catch(e) {return json({ok:false,error:e.message==="BODY_TOO_LARGE"?"BODY_TOO_LARGE":"INVALID_JSON"},e.message==="BODY_TOO_LARGE"?413:400,request);}
   const sourceMessages=Array.isArray(body.messages)?body.messages:(Array.isArray(body.conversation)?body.conversation:[]);
   const messages=sourceMessages.slice(-4), userMessage=typeof body.message==="string"?body.message:"";
   const context=body.context&&typeof body.context==="object"?body.context:(body.lab&&typeof body.lab==="object"?body.lab:{});
@@ -91,13 +158,38 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
    }
    let executedActions=[]; let actionExecutionError=null;
    if(parsed.actions.length && env.DB) {
-     try { executedActions=await executePrimeActions(env.DB,parsed.actions); }
-     catch(actionErr) { actionExecutionError=String(actionErr&&actionErr.message||actionErr).slice(0,240); }
+     const adminToken=env.ENGINE_ADMIN_TOKEN;
+     const authorized=Boolean(adminToken)&&request.headers.get("Authorization")===`Bearer ${adminToken}`;
+     if(!authorized) actionExecutionError="ACTIONS_REQUIRE_ADMIN_AUTH";
+     else {
+       try { executedActions=await executePrimeActions(env.DB,parsed.actions); }
+       catch(actionErr) { actionExecutionError=String(actionErr&&actionErr.message||actionErr).slice(0,240); }
+     }
    }
    return json({ok:true,model:MODEL,role:"MICELIO_PRIME",reply:parsed.reply,actions:parsed.actions,executedActions,actionExecutionError,primeContext},200,request);
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
  },
  async scheduled(controller,env,ctx) {
-  ctx.waitUntil(runAutonomousTick(env).catch(err=>console.error("MR_ZERO_ENGINE_TICK_FAILED",String(err&&err.message||err))));
+  ctx.waitUntil((async()=>{
+   let feed=null;
+   try {
+    if(!env.MARKET_FEED) throw new Error("MARKET_FEED_BINDING_MISSING");
+    const id=env.MARKET_FEED.idFromName("binance-global");
+    const stub=env.MARKET_FEED.get(id);
+    const response=await stub.fetch("https://market-feed/snapshot");
+    feed=await response.json();
+    if(!response.ok||!feed?.ok) throw new Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
+   } catch(e) {
+    const message=String(e&&e.message||e);
+    console.log("MR_ZERO_FEED_SNAPSHOT_ERROR",message);
+    const engine={ok:false,error:message};
+    const race={ok:false,mode:"PAPER_ONLY",error:message,quoteCount:0};
+    console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:false,raceOk:false,quoteCount:0,raceError:message}));
+    return;
+   }
+   const engine=await runAutonomousTick(env,feed.candles||{}).catch(err=>({ok:false,error:String(err&&err.message||err)}));
+   const race=await runRaceCycle(env,feed,{micelioOnly:true}).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
+   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
+  })());
  }
 };

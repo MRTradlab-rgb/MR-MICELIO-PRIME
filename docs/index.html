@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#080d18"><title>MR TradLab ZERO · Pista ao vivo</title>
+<style>
+:root{color-scheme:dark;--bg:#080d18;--panel:#101a2b;--line:#24334b;--muted:#8da1bd;--text:#edf4ff;--cyan:#55d9ee;--green:#48d597;--amber:#f3bd59;--red:#ff6e78}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% -20%,#173451 0,transparent 55%),var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1180px;margin:auto;padding:22px 16px 50px}.top{display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:20px}.brand{font-weight:900;letter-spacing:.12em}.brand span{color:var(--cyan)}.sub{color:var(--muted);font-size:12px;letter-spacing:.14em}.pill{border:1px solid var(--line);border-radius:99px;padding:7px 12px;color:var(--amber);font-size:12px}.hero{padding:24px;border:1px solid #25415a;border-radius:20px;background:linear-gradient(120deg,#11263a,#101827 70%);margin-bottom:16px}.hero h1{font-size:clamp(25px,5vw,42px);margin:4px 0}.hero p{color:var(--muted);margin:4px 0}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:14px 0}.card{background:linear-gradient(150deg,#121f32,#0e1726);border:1px solid var(--line);border-radius:16px;padding:16px;min-width:0}.k{font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}.v{font-size:24px;font-weight:800;margin-top:8px;overflow-wrap:anywhere}.small{font-size:12px;color:var(--muted);margin-top:5px}.section{font-size:16px;margin:22px 0 10px}.status{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}.dot{width:8px;height:8px;border-radius:50%;background:var(--amber);display:inline-block}.ok{background:var(--green)}.bad{background:var(--red)}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:12px}.notice{border:1px dashed #46536a;border-radius:12px;padding:14px;color:var(--muted);font-size:13px}.row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #1d2a3e;align-items:center}.row:last-child{border:0}.log{white-space:pre-wrap;overflow-wrap:anywhere;color:#a9bdd8;font:12px/1.6 ui-monospace,monospace;max-height:260px;overflow:auto}.foot{margin-top:22px;color:var(--muted);font-size:12px;text-align:center}.refresh{background:#17364b;border:1px solid #2c6077;color:#dffaff;border-radius:10px;padding:9px 13px;font-weight:700}.timer{font-size:clamp(30px,7vw,54px);font-weight:900;letter-spacing:.05em;color:var(--cyan);font-variant-numeric:tabular-nums}.progress{height:9px;background:#1c2a3d;border-radius:99px;overflow:hidden;margin:12px 0}.progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,#55d9ee,#48d597);transition:width .4s}.wallet{font-size:20px;font-weight:800;color:var(--green)}
+@media(max-width:760px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.twocol{grid-template-columns:1fr}.hero{padding:18px}}@media(max-width:380px){.grid{grid-template-columns:1fr 1fr}.v{font-size:20px}}
+</style></head>
+<body><main>
+<header class="top"><div><div class="brand">MR <span>TRADLAB</span> ZERO</div><div class="sub">MICÉLIO PRIME · PISTA DE OBSERVAÇÃO</div></div><div style="display:flex;align-items:center;gap:10px"><span class="pill">PAPER ONLY · SEM ORDENS REAIS</span><button class="refresh" id="refresh">Atualizar</button></div></header>
+<section class="hero"><div class="sub">CORRIDA DE INTELIGÊNCIAS · MONITORAMENTO EM TEMPO REAL</div><h1 id="headline">Preparando a largada.</h1><p>O painel mostra somente dados recebidos do Worker e da Binance. As carteiras são virtuais; nenhuma ordem real é enviada.</p></section>
+<div class="grid">
+<div class="card"><div class="k">Motor autônomo</div><div class="v" id="engine">Verificando</div><div class="small" id="engineTime">Aguardando Worker</div></div>
+<div class="card"><div class="k">Agentes ativos</div><div class="v" id="agents">—</div><div class="small" id="agentDetail">Aguardando dados</div></div>
+<div class="card"><div class="k">Feed Binance</div><div class="v" id="feed">—</div><div class="small" id="feedTime">Sem confirmação</div></div>
+<div class="card"><div class="k">Ciclos da corrida</div><div class="v" id="race">—</div><div class="small" id="raceTime">Aguardando primeira largada</div></div>
+</div>
+<h2 class="section">Cronômetro de preparação e largada</h2>
+<div class="card">
+<div class="row"><strong>COLETA DAS 25 VELAS FECHADAS</strong><span class="status"><i class="dot" id="prepDot"></i><span id="prepStatus">Aguardando feed</span></span></div>
+<div class="timer" id="countdown">25:00</div>
+<div class="progress"><span id="progress"></span></div>
+<div class="small" id="candleProgress">0/25 velas completas em cada mercado · estimativa inicial de 25 minutos</div>
+<div class="row"><span>Primeira execução confirmada do motor</span><strong id="engineStart">Ainda não confirmada</strong></div>
+<div class="row"><span>Primeiro ciclo da corrida registrado</span><strong id="raceStart">Ainda não registrado</strong></div>
+<div class="row"><span>Último ciclo</span><strong id="raceLast">—</strong></div>
+</div>
+<h2 class="section">Carteiras virtuais</h2>
+<div class="twocol">
+<div class="card"><div class="row"><strong>GEMMA</strong><span class="status">Carteira independente</span></div><div class="wallet" id="gemmaCash">Aguardando dados</div><div class="small" id="gemmaInfo">Saldo em caixa · posições abertas</div></div>
+<div class="card"><div class="row"><strong>MICÉLIO PRIME</strong><span class="status">Carteira cooperativa</span></div><div class="wallet" id="micelioCash">Aguardando dados</div><div class="small" id="micelioInfo">Saldo em caixa · posições abertas</div></div>
+</div>
+<h2 class="section">Cotações ao vivo · 11 mercados</h2><div class="card"><div class="row"><strong>BINANCE WEBSOCKET</strong><span class="status"><i class="dot" id="marketDot"></i><span id="marketStatus">Conectando</span></span></div><div class="small" id="marketUpdated">Aguardando primeira cotação…</div><div id="quotes" class="log" style="max-height:360px;margin-top:10px">Carregando cotações reais…</div></div>
+<h2 class="section">Micélio Prime × Gemma</h2><div class="twocol">
+<div class="card"><div class="row"><strong>MICÉLIO PRIME</strong><span class="status"><i class="dot" id="micDot"></i><span id="micStatus">Aguardando API</span></span></div><p class="small">50 agentes cooperativos. O painel não presume que estejam negociando só porque estão cadastrados.</p><div class="notice" id="agentDetail2">Aguardando dados reais dos agentes.</div></div>
+<div class="card"><div class="row"><strong>GEMMA</strong><span class="status"><i class="dot" id="gemDot"></i><span id="gemStatus">Aguardando ciclo</span></span></div><p class="small">Análise independente com o feed ao vivo.</p><div class="notice" id="gemmaState">Aguardando execução confirmada da IA.</div></div>
+</div>
+<h2 class="section">Posições e últimas operações</h2><div class="twocol"><div class="card"><div class="k">Posições abertas</div><div id="positions" class="notice">Aguardando simulação.</div></div><div class="card"><div class="k">Últimas operações simuladas</div><div id="trades" class="notice">Nenhuma operação recebida.</div></div></div>
+<h2 class="section">Diagnóstico em tempo real</h2><div class="card"><div class="log" id="log">Inicializando painel…</div></div>
+<div class="foot">MR TradLab ZERO · Observação somente leitura · Simulação virtual · <span id="updated">Ainda não atualizado</span></div>
+</main>
+<script>
+const BASE='https://mr-micelio.felipe-revolt.workers.dev';
+const SYMBOLS=['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT','DOGEUSDT','LINKUSDT','PEPEUSDT','FLOKIUSDT','BONKUSDT'];
+const $=id=>document.getElementById(id), stamp=()=>new Date().toLocaleString('pt-BR');
+const fmt=n=>Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:6});
+const time=t=>t?new Date(t).toLocaleString('pt-BR'):'—';
+function log(s){$('log').textContent='['+stamp()+'] '+s+'\n'+$('log').textContent;}
+async function get(path){const r=await fetch(BASE+path,{headers:{Accept:'application/json'},cache:'no-store'});if(!r.ok)throw Error(path+' HTTP '+r.status);return r.json();}
+let lastSnapshot=null,lastRace=null,lastEngine=null;
+function renderTimer(){
+ const counts=SYMBOLS.map(s=>(lastSnapshot?.candles?.[s]||[]).length);
+ const ready=counts.length?Math.min(...counts):0, pct=Math.min(100,ready/25*100), remaining=Math.max(0,25-ready)*60;
+ const mm=String(Math.floor(remaining/60)).padStart(2,'0'),ss=String(remaining%60).padStart(2,'0');
+ $('countdown').textContent=ready>=25?'00:00':mm+':'+ss;
+ $('progress').style.width=pct+'%';
+ $('candleProgress').textContent=ready+'/25 velas fechadas em cada mercado · '+(ready>=25?'coleta mínima atingida; aguardando confirmação do motor':'contagem baseada nas velas reais recebidas pelo WebSocket');
+ $('prepStatus').textContent=ready>=25?'PRONTO PARA PROCESSAR':(lastSnapshot?.connected?'COLETANDO VELAS':'AGUARDANDO FEED');
+ $('prepDot').className='dot '+(ready>=25?'ok':lastSnapshot?.connected?'':'bad');
+}
+async function refreshMarket(){
+ try{
+  const d=await get('/market/snapshot');lastSnapshot=d;
+  const entries=Object.entries(d.quotes||{}).sort((a,b)=>a[0].localeCompare(b[0]));
+  $('quotes').innerHTML=entries.length?entries.map(([s,q])=>'<div class="row"><strong>'+s+'</strong><span>US$ '+fmt(q.price)+'</span><span class="small">'+new Date(q.timestamp).toLocaleTimeString('pt-BR')+'</span></div>').join(''):'Nenhuma cotação fresca recebida.';
+  const live=Boolean(d.connected&&entries.length);
+  $('marketDot').className='dot '+(live?'ok':'bad');$('marketStatus').textContent=live?'CONECTADO':'SEM FEED FRESCO';
+  $('marketUpdated').textContent='Atualizado '+stamp()+' · '+entries.length+'/11 cotações frescas (máx. 15s).';
+  $('feed').textContent=live?'AO VIVO':'SEM DADOS';$('feedTime').textContent=entries.length+' mercados com cotação válida';
+  renderTimer();
+ }catch(e){lastSnapshot=null;$('marketDot').className='dot bad';$('marketStatus').textContent='INDISPONÍVEL';$('marketUpdated').textContent=e.message;$('feed').textContent='ERRO';renderTimer();}
+}
+async function refreshRace(){
+ try{
+  const d=await get('/race/public-status');if(!d.ok)throw Error('API de corrida indisponível');lastRace=d;
+  const cycles=d.recentCycles||[];const latest=cycles[0],first=cycles[cycles.length-1];
+  $('race').textContent=String(cycles.length);$('raceTime').textContent=latest?'Último status: '+latest.status:'Nenhum ciclo registrado';
+  $('raceStart').textContent=first?time(first.created_at):'Ainda não registrado';$('raceLast').textContent=latest?time(latest.created_at)+' · '+latest.status:'—';
+  const wallet=id=>(d.wallets||[]).find(w=>w.wallet_id===id);
+  const positions=id=>(d.positions||[]).filter(p=>p.wallet_id===id);
+  for(const [id,cash,info] of [['GEMMA','gemmaCash','gemmaInfo'],['MICELIO','micelioCash','micelioInfo']]){
+   const w=wallet(id),ps=positions(id);$(cash).textContent=w?'$ '+fmt(w.cash_balance):'Carteira não inicializada';
+   $(info).textContent=w?'Saldo inicial $ '+fmt(w.initial_balance)+' · '+ps.length+' posição(ões) aberta(s)':'Sem registro no banco';
+  }
+  $('positions').innerHTML=(d.positions||[]).map(p=>'<div class="row"><span><strong>'+p.wallet_id+'</strong> · '+p.symbol+'</span><span>'+fmt(p.quantity)+' @ '+fmt(p.entry_price)+'</span></div>').join('')||'Nenhuma posição aberta.';
+  $('trades').innerHTML=(d.recentTrades||[]).slice(0,10).map(t=>'<div class="row"><span><strong>'+t.wallet_id+'</strong> '+t.side+' '+t.symbol+'</span><span>'+fmt(t.quantity)+' @ '+fmt(t.price)+'</span></div>').join('')||'Nenhuma operação registrada até agora.';
+  $('gemmaState').textContent=latest?'Último ciclo: '+latest.status+' · '+latest.quote_count+' cotações no ciclo':'Nenhum ciclo executado ainda.';
+  $('gemDot').className='dot '+(latest?'ok':'');$('gemStatus').textContent=latest?'CICLO REGISTRADO':'AGUARDANDO';
+ }catch(e){lastRace=null;$('race').textContent='OFFLINE';$('raceTime').textContent=e.message;}
+}
+async function refreshEngine(){
+ try{
+  const [s,a]=await Promise.all([get('/engine/status'),get('/engine/agents')]);lastEngine=s;
+  const active=Number(s.activeAgents??s.agents??0),total=Number(s.agents??0),lr=s.lastRun;
+  const running=Boolean(lr&&Number(lr.symbols_ok)>0);
+  $('engine').textContent=running?'EXECUTANDO':'RESPONDENDO';
+  $('engineTime').textContent=lr?'Última rodada '+time(lr.run_at)+' · '+lr.symbols_ok+'/'+(lr.symbols_ok+lr.symbols_failed)+' mercados OK':'Worker respondeu; sem rodada confirmada';
+  $('engineStart').textContent=running?time(lr.run_at):'Ainda não confirmada';
+  $('agents').textContent=active+'/'+total;$('agentDetail').textContent=Number(s.forecasts||0)+' previsões · '+Number(s.pendingForecasts||0)+' pendentes · '+Number(s.closedForecasts||0)+' avaliadas';
+  $('agentDetail2').textContent=active+' agentes ativos de '+total+' cadastrados. '+Number(s.lastRun?.forecasts_created||0)+' previsões na última rodada; '+Number(s.lastRun?.symbols_failed||0)+' mercados com falha.';
+  $('micStatus').textContent=running?'MOTOR COM RODADA OK':'SEM RODADA OK';$('micDot').className='dot '+(running?'ok':'bad');
+  if(lr?.errors?.length)log('Falhas do motor: '+lr.errors.map(x=>x.symbol+'='+x.error).join(', '));
+  else if(lr)log('Rodada do motor: '+lr.symbols_ok+' mercados OK, '+lr.forecasts_created+' previsões criadas.');
+  $('headline').textContent=running?'Motor em atividade — corrida monitorada.':'Preparação da largada — aguardando execução confirmada.';
+ }catch(e){lastEngine=null;$('engine').textContent='INDISPONÍVEL';$('engineTime').textContent=e.message;$('micStatus').textContent='SEM CONEXÃO';$('micDot').className='dot bad';}
+ $('updated').textContent='Atualizado: '+stamp();
+}
+$('refresh').addEventListener('click',()=>{refreshMarket();refreshEngine();refreshRace();});
+refreshMarket();refreshEngine();refreshRace();
+setInterval(refreshMarket,30000);setInterval(refreshEngine,5000);setInterval(refreshRace,5000);
+</script></body></html>
