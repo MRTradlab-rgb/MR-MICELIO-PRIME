@@ -55,6 +55,9 @@ export class BinanceMarketFeed {
     try{await this.ctx.storage.put("feed_state",{quotes:this.quotes,candles:this.candles,lastMessageAt:this.lastMessageAt,lastPersistAt:this.lastPersistAt,lastProcessedClose:this.lastProcessedClose,lastError:this.lastError,lastClose:this.lastClose,connectAttempts:this.connectAttempts});}catch(e){this.lastError="STORAGE_WRITE: "+String(e?.message||e);}
   }
   async connect(){
+    this.lastError="LEGACY_DURABLE_OBJECT_FEED_DISABLED_USE_DIRECT_BROWSER_WEBSOCKET";
+    this.connecting=false;
+    return;
     if(this.isOpen()||this.connecting)return;
     this.connecting=true;this.connectAttempts++;
     const endpoint=WS_URLS[this.connectIndex];
@@ -112,7 +115,9 @@ export class BinanceMarketFeed {
   }
   async alarm(){
     await this.loadPromise;
-    if(!this.isOpen()&&!this.connecting) await this.connect();
-    console.log("MR_ZERO_WS_RECOVERY",JSON.stringify({connected:this.isOpen(),connecting:this.connecting,lastError:this.lastError}));
+    if(this.isOpen())try{this.socket.close(1000,"Autonomous feed migrated to scheduled REST");}catch{}
+    this.socket=null;this.connecting=false;
+    this.lastError="LEGACY_DURABLE_OBJECT_FEED_DISABLED";
+    console.log("MR_ZERO_LEGACY_DO_STOPPED");
   }
 }
