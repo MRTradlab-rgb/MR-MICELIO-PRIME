@@ -3,7 +3,7 @@
  * 50 cooperative agents, public Binance market data, D1 persistence.
  * No exchange keys, no order endpoint, no real-money execution.
  */
-const SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"];
+const SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","LINKUSDT","PEPEUSDT","FLOKIUSDT","BONKUSDT"];
 const STRATEGIES = ["MOMENTUM","MEAN_REVERSION","BREAKOUT","VOLATILITY","TREND","CONTRARIAN"];
 const FEE_PER_SIDE = 0.001;
 const SLIPPAGE_PER_SIDE = 0.0005;
@@ -24,23 +24,30 @@ const AGENTS = Array.from({length:50},(_,i)=>({
   horizon:HORIZON_MINUTES
 }));
 
+let agentsReadyPromise=null;
 async function ensureAgents(db) {
-  const stamp=nowIso();
-  await db.batch(AGENTS.map(a=>db.prepare(
-    "INSERT OR IGNORE INTO engine_agents (agent_id,archetype,strategy,threshold,total_forecasts,closed_forecasts,wins,losses,net_return_sum,updated_at) VALUES (?,?,?,?,0,0,0,0,0,?)"
-  ).bind(a.id,a.archetype,a.strategy,a.threshold,stamp)));
+  if(!agentsReadyPromise) {
+    agentsReadyPromise=(async()=>{
+      const existing=await db.prepare("SELECT COUNT(*) AS total FROM engine_agents").first();
+      if(Number(existing?.total||0)<AGENTS.length) {
+        const stamp=nowIso();
+        await db.batch(AGENTS.map(a=>db.prepare(
+          "INSERT OR IGNORE INTO engine_agents (agent_id,archetype,strategy,threshold,total_forecasts,closed_forecasts,wins,losses,net_return_sum,updated_at) VALUES (?,?,?,?,0,0,0,0,0,?)"
+        ).bind(a.id,a.archetype,a.strategy,a.threshold,stamp)));
+      }
+    })().catch(error=>{agentsReadyPromise=null;throw error;});
+  }
+  await agentsReadyPromise;
 }
 
-async function fetchCandles(symbol) {
-  const url=`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1m&limit=80`;
-  const res=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(9000)});
-  if(!res.ok) throw new Error(`BINANCE_HTTP_${res.status}_${symbol}`);
-  const rows=await res.json();
-  if(!Array.isArray(rows)||rows.length<30) throw new Error(`INSUFFICIENT_CANDLES_${symbol}`);
-  const closed=rows.filter(r=>Number(r[6])<Date.now()-1500);
-  if(closed.length<25) throw new Error(`NO_CLOSED_CANDLES_${symbol}`);
-  if(Date.now()-Number(closed.at(-1)[6])>180000) throw new Error(`STALE_CANDLES_${symbol}`);
-  return closed.map(r=>({openTime:Number(r[0]),open:Number(r[1]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[5]),closeTime:Number(r[6])}));
+function getWebSocketCandles(symbol, suppliedCandles) {
+  const rows=Array.isArray(suppliedCandles?.[symbol])?suppliedCandles[symbol]:[];
+  const closed=rows.filter(r=>r&&Number.isFinite(Number(r.openTime))&&Number.isFinite(Number(r.closeTime))&&Number(r.open)>0&&Number(r.close)>0&&Number(r.high)>0&&Number(r.low)>0&&Number(r.volume)>=0&&Number(r.closeTime)<Date.now()-1000)
+    .map(r=>({openTime:Number(r.openTime),open:Number(r.open),high:Number(r.high),low:Number(r.low),close:Number(r.close),volume:Number(r.volume),closeTime:Number(r.closeTime)}))
+    .sort((a,b)=>a.openTime-b.openTime);
+  if(closed.length<25) throw new Error(`INSUFFICIENT_WEBSOCKET_CANDLES_${symbol}_${closed.length}`);
+  if(Date.now()-closed.at(-1).closeTime>180000) throw new Error(`STALE_WEBSOCKET_CANDLES_${symbol}`);
+  return closed.slice(-80);
 }
 
 function features(c) {
@@ -101,7 +108,7 @@ async function evaluateDue(db,symbol,candles) {
   }
   // Ajuste gradual de sensibilidade somente após amostra mínima; não troca a especialidade do agente.
   for (const agentId of touchedAgents) {
-    const recent=await db.prepare("SELECT net_return FROM engine_evaluations WHERE agent_id=? ORDER BY id DESC LIMIT 20").bind(agentId).all();
+    const recent=await db.prepare("SELECT net_return FROM engine_evaluations WHERE agent_id=? ORDER BY evaluated_at DESC LIMIT 20").bind(agentId).all();
     const values=(recent.results||[]).map(x=>Number(x.net_return)).filter(Number.isFinite);
     if(values.length<10) continue;
     const avg=mean(values);
@@ -141,12 +148,12 @@ async function createForecasts(db,symbol,candles) {
   return {created,features:{price:f.last,r1:f.r1,r3:f.r3,r6:f.r6,volatility:f.volatility,trend:f.trend,volumeRatio:f.volRatio}};
 }
 
-export async function runAutonomousTick(env) {
+export async function runAutonomousTick(env, suppliedCandles = {}) {
   if(!env.DB) throw new Error("D1_BINDING_MISSING");
   await ensureAgents(env.DB);
   const started=Date.now(), results=[], errors=[];
   const outcomes=await Promise.allSettled(SYMBOLS.map(async symbol=>{
-    const candles=await fetchCandles(symbol);
+    const candles=getWebSocketCandles(symbol,suppliedCandles);
     await saveCandle(env.DB,symbol,candles.at(-1));
     const evaluated=await evaluateDue(env.DB,symbol,candles);
     const forecast=await createForecasts(env.DB,symbol,candles);
@@ -220,16 +227,20 @@ export async function handleEngine(request,env,url,json) {
   if(!env.DB) return json({ok:false,error:"D1_BINDING_MISSING"},503,request);
   if(request.method==="GET"&&url.pathname==="/engine/status") {
     await ensureAgents(env.DB);
-    const [agents,forecasts,runs,pending,last,paused]=await Promise.all([
-      env.DB.prepare("SELECT COUNT(*) AS total, SUM(closed_forecasts) AS closed, SUM(wins) AS wins, SUM(losses) AS losses, SUM(net_return_sum) AS net FROM engine_agents").first(),
-      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts").first(),
-      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_runs").first(),
-      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_forecasts WHERE status='PENDING'").first(),
-      env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated FROM engine_runs ORDER BY id DESC LIMIT 1").first(),
-      env.DB.prepare("SELECT COUNT(*) AS total FROM engine_agents WHERE status='PAUSED'").first()
+    const [agents,runs,last]=await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS total, SUM(total_forecasts) AS forecasts, SUM(closed_forecasts) AS closed, SUM(wins) AS wins, SUM(losses) AS losses, SUM(net_return_sum) AS net, SUM(CASE WHEN status='PAUSED' THEN 1 ELSE 0 END) AS paused FROM engine_agents").first(),
+      env.DB.prepare("SELECT MAX(id) AS total FROM engine_runs").first(),
+      env.DB.prepare("SELECT run_at,duration_ms,symbols_ok,symbols_failed,forecasts_created,forecasts_evaluated,details FROM engine_runs ORDER BY id DESC LIMIT 1").first()
     ]);
-    const closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
-    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:Number(agents?.total||0),activeAgents:Number(agents?.total||0)-Number(paused?.total||0),pausedAgents:Number(paused?.total||0),forecasts:Number(forecasts?.total||0),closedForecasts:closed,pendingForecasts:Number(pending?.total||0),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun:last||null,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,realOrdersEnabled:false},200,request);
+    let lastRun=last||null;
+    if(lastRun) {
+      let diagnostic={};
+      try { diagnostic=JSON.parse(lastRun.details||"{}"); } catch {}
+      lastRun={run_at:lastRun.run_at,duration_ms:lastRun.duration_ms,symbols_ok:lastRun.symbols_ok,symbols_failed:lastRun.symbols_failed,forecasts_created:lastRun.forecasts_created,forecasts_evaluated:lastRun.forecasts_evaluated,errors:(diagnostic.errors||[]).slice(0,11).map(x=>({symbol:x.symbol,error:String(x.error||"UNKNOWN").slice(0,180)})),results:(diagnostic.results||[]).map(x=>({symbol:x.symbol,price:x.price,forecastsCreated:x.forecastsCreated,evaluated:x.evaluated}))};
+    }
+    const totalAgents=Number(agents?.total||0), pausedAgents=Number(agents?.paused||0);
+    const forecastsTotal=Number(agents?.forecasts||0), closed=Number(agents?.closed||0), wins=Number(agents?.wins||0);
+    return json({ok:true,service:"MR TRADLAB ZERO AUTONOMOUS ENGINE",mode:"PAPER_ONLY",agents:totalAgents,activeAgents:totalAgents-pausedAgents,pausedAgents,forecasts:forecastsTotal,closedForecasts:closed,pendingForecasts:Math.max(0,forecastsTotal-closed),wins,losses:Number(agents?.losses||0),netWinRate:closed?Number((wins/closed*100).toFixed(2)):null,aggregateNetReturn:Number(agents?.net||0),runs:Number(runs?.total||0),lastRun,symbols:SYMBOLS,interval:"1m Binance public klines",horizonMinutes:HORIZON_MINUTES,feesPerSide:FEE_PER_SIDE,slippagePerSide:SLIPPAGE_PER_SIDE,countsSource:"AGENT_COUNTERS_AND_RUN_SEQUENCE",realOrdersEnabled:false},200,request);
   }
   if(request.method==="GET"&&url.pathname==="/engine/agents") {
     await ensureAgents(env.DB);

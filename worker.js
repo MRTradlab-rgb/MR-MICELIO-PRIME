@@ -4,6 +4,9 @@
  * Required binding: AI (Workers AI)
  */
 import { handleEvolution } from "./evolution.js";
+import { BinanceMarketFeed } from "./market-feed.js";
+export { BinanceMarketFeed };
+import { handleRace, runRaceCycle } from "./race.js";
 import { handleEngine, runAutonomousTick, getPrimeContext, executePrimeActions } from "./engine.js";
 const MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const ALLOWED_ACTIONS = new Set(["pause_agent","resume_agent","pause_group","resume_group","assign_mission","analyze_health","start_sandbox_experiment"]);
@@ -50,6 +53,8 @@ export default {
  async fetch(request,env) {
   if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
   const url=new URL(request.url);
+  if(url.pathname.startsWith("/race")) return handleRace(request,env,url,json);
+  if(url.pathname.startsWith("/market/")) { if(!env.MARKET_FEED) return json({ok:false,error:"MARKET_FEED_BINDING_MISSING"},503,request); try { const id=env.MARKET_FEED.idFromName("binance-global"); const stub=env.MARKET_FEED.get(id); const path=url.pathname==="/market/snapshot"?"/snapshot":url.pathname==="/market/health"?"/health":"/connect"; const result=await stub.fetch("https://market-feed"+path); return new Response(result.body,{status:result.status,headers:{"Content-Type":"application/json","Cache-Control":"no-store",...corsHeaders(request)}}); } catch(e) { console.log("MR_ZERO_MARKET_ROUTE_ERROR",String(e&&e.stack||e&&e.message||e)); return json({ok:false,error:"MARKET_FEED_DO_EXCEPTION",detail:String(e&&e.message||e).slice(0,500)},502,request); } }
   if(url.pathname.startsWith("/engine")) return handleEngine(request,env,url,json);
   if(url.pathname.startsWith("/evolution")) return handleEvolution(request,env,url,corsHeaders,json);
   if(request.method==="GET"&&url.pathname==="/") return json({ok:true,service:"MR Micelio Prime",endpoints:["GET /health","POST /chat","GET /engine/status","GET /engine/agents","POST /engine/seed","POST /engine/tick"],health:"/health"},200,request);
@@ -98,6 +103,26 @@ Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
   } catch(err) {return json({ok:false,error:"AI_INFERENCE_FAILED",detail:String(err&&err.message||err).slice(0,300)},502,request);}
  },
  async scheduled(controller,env,ctx) {
-  ctx.waitUntil(runAutonomousTick(env).catch(err=>console.error("MR_ZERO_ENGINE_TICK_FAILED",String(err&&err.message||err))));
+  ctx.waitUntil((async()=>{
+   let feed=null;
+   try {
+    if(!env.MARKET_FEED) throw new Error("MARKET_FEED_BINDING_MISSING");
+    const id=env.MARKET_FEED.idFromName("binance-global");
+    const stub=env.MARKET_FEED.get(id);
+    const response=await stub.fetch("https://market-feed/snapshot");
+    feed=await response.json();
+    if(!response.ok||!feed?.ok) throw new Error("BINANCE_WEBSOCKET_NO_FRESH_QUOTES");
+   } catch(e) {
+    const message=String(e&&e.message||e);
+    console.log("MR_ZERO_FEED_SNAPSHOT_ERROR",message);
+    const engine={ok:false,error:message};
+    const race={ok:false,mode:"PAPER_ONLY",error:message,quoteCount:0};
+    console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:false,raceOk:false,quoteCount:0,raceError:message}));
+    return;
+   }
+   const engine=await runAutonomousTick(env,feed.candles||{}).catch(err=>({ok:false,error:String(err&&err.message||err)}));
+   const race=await runRaceCycle(env,feed,{micelioOnly:true}).catch(err=>({ok:false,mode:"PAPER_ONLY",error:String(err&&err.message||err)}));
+   console.log("MR_ZERO_SCHEDULED_RESULT",JSON.stringify({engineOk:engine?.ok,engineOkMarkets:engine?.results?.length||0,engineFailedMarkets:engine?.errors?.length||0,raceOk:race?.ok,quoteCount:race?.quoteCount||0,raceError:race?.error||null}));
+  })());
  }
 };

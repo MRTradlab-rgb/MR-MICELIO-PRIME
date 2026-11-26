@@ -1,6 +1,15 @@
 name: Deploy MR Micelio Prime
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker.js'
+      - 'engine.js'
+      - 'market-feed.js'
+      - 'race.js'
+      - 'evolution.js'
+      - '.github/workflows/deploy-prime.yml'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +22,7 @@ jobs:
       - name: Checkout PRIME branch
         uses: actions/checkout@v4
         with:
-          ref: feature/prime-engine-gemma-final
+          ref: main
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,8 +33,9 @@ jobs:
         run: |
           node --check --input-type=module < worker.js
           node --check --input-type=module < engine.js
+          node --check --input-type=module < market-feed.js
+          node --check --input-type=module < race.js
           node --check --input-type=module < evolution.js
-          node --check --input-type=module < micelio-open-bridge.js
 
       - name: Deploy Worker to Cloudflare
         uses: cloudflare/wrangler-action@v3
