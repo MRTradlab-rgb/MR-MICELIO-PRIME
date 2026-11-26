@@ -59,7 +59,7 @@ export default {
   let body; try {body=await request.json();} catch {return json({ok:false,error:"Invalid JSON body."},400,request);}
   const sourceMessages=Array.isArray(body.messages)?body.messages:(Array.isArray(body.conversation)?body.conversation:[]);
   const messages=sourceMessages.slice(-4), userMessage=typeof body.message==="string"?body.message:"";
-  const context=body.context&&typeof body.context==="object"?body.context:(body.lab&&typeof body.lab==="object"?body.lab:{});
+  const context=body.context&&typeof body.context==="object"?body.context:(body.lab&&typeof body.lab==="object"?body.lab:body);
   const safeMessages=messages.map(m=>({role:m&&m.role==="assistant"?"assistant":"user",content:String(m&&m.content||"").slice(0,700)}));
   const system=`Você é o MR Micélio Prime, coordenador de um laboratório de pesquisa e desenvolvimento de IA.
 Sua missão é dialogar, explicar, pesquisar conceitos, propor experimentos verificáveis e coordenar agentes.
@@ -73,12 +73,33 @@ REGRAS:
 - Não afirme que aprendeu permanentemente; proponha registros, testes e métricas verificáveis.
 - Nunca solicite nem exponha chaves, senhas ou credenciais.
 - Nunca autorize operações financeiras reais. Experimentos devem ser simulados.
-- Você coordena os 50 agentes com base nos dados reais fornecidos pelo contexto do motor. Pode executar ações estruturadas da lista permitida quando houver justificativa clara. Nunca invente métricas nem alegue ação concluída sem confirmação do executor.
+- Use agentRegistry do painel quando presente para observar os 50 agentes; diferencie esses dados locais dos registros persistidos em primeContext. Não misture as duas fontes nem invente métricas. Pode executar ações estruturadas da lista permitida quando houver justificativa clara. Nunca alegue ação concluída sem confirmação do executor.
 - Retorne SOMENTE JSON válido no formato: {"reply":"resposta ao usuário","actions":[]}
 Ações permitidas: pause_agent {agentId}, resume_agent {agentId}, pause_group {group}, resume_group {group}, assign_mission {group, mission}, analyze_health {}, start_sandbox_experiment {symbol, strategy, reason}.
 Se não houver motivo claro para executar uma ação, retorne actions vazio.`;
   const primeContext=await getPrimeContext(env.DB);
-  const contextText=JSON.stringify({userContext:context,primeContext}).slice(0,5000);
+  const observedAgents=Array.isArray(context.agentRegistry)?context.agentRegistry.slice(0,50):Array.isArray(context.agents)?context.agents.slice(0,50):[];
+  const observedApp=context.appObservation&&typeof context.appObservation==="object"?context.appObservation:{};
+  const compactContext={
+    product:context.product,mode:context.mode,identity:context.identity,session:context.session,
+    registrySummary:context.registrySummary,
+    agentRegistry:observedAgents,
+    market:Array.isArray(context.market)?context.market.slice(0,20):[],
+    metrics:context.metrics,
+    recentResults:Array.isArray(context.recentResults)?context.recentResults.slice(0,20):[],
+    strategies:context.strategies,
+    networkNotes:Array.isArray(context.networkNotes)?context.networkNotes.slice(0,20):[],
+    appObservation:{
+      capturedAt:observedApp.capturedAt,
+      controls:observedApp.controls,
+      registry:observedApp.registry?{expected:observedApp.registry.expected,reported:observedApp.registry.reported,active:observedApp.registry.active,paused:observedApp.registry.paused,complete:observedApp.registry.complete}:null,
+      market:observedApp.market,
+      predictions:observedApp.predictions?{pending:observedApp.predictions.pending}:null,
+      results:observedApp.results?{evaluated:observedApp.results.evaluated,accuracy:observedApp.results.accuracy}:null,
+      recentLogs:Array.isArray(observedApp.recentLogs)?observedApp.recentLogs.slice(-20):[]
+    }
+  };
+  const contextText=JSON.stringify({userContext:compactContext,primeContext}).slice(0,15000);
   const conversationText=safeMessages.map(m=>m.role.toUpperCase()+": "+m.content).join("\n");
   const prompt=system+"\n\nCONTEXTO ATUAL DO LABORATÓRIO:\n"+contextText+"\n\nCONVERSA RECENTE:\n"+conversationText+"\n\nMENSAGEM ATUAL:\n"+userMessage.slice(0,1500)+"\n\nResponda no JSON exigido.";
   try {
